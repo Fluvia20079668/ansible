@@ -20,7 +20,21 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials
+      # 2️⃣ Install Ansible and run playbook
+      - name: Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible
+          ansible --version
+
+      - name: Run Ansible playbook
+        run: |
+          echo "🔧 Running Ansible playbook to configure EC2 server..."
+          ansible-playbook -i ansible/inventory.ini ansible/install_docker.yml
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+
+      # 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -28,11 +42,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Setup Terraform
+      # 4️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      # 4️⃣ Terraform Init & Apply
+      # 5️⃣ Terraform Init & Apply
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
@@ -41,25 +55,26 @@ jobs:
         working-directory: terraform
         run: terraform apply -auto-approve
 
-      # 5️⃣ Ensure ECR repository exists
+      # 6️⃣ Ensure ECR repository exists
       - name: Create ECR repository if not exists
         run: |
           aws ecr describe-repositories --repository-names ${{ env.IMAGE_REPO }} >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name ${{ env.IMAGE_REPO }}
           echo "ECR repository ${{ env.IMAGE_REPO }} is ready."
-      # 6️⃣ Set up Docker Buildx (multi-platform)
+
+      # 7️⃣ Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
           buildkitd-flags: --debug
 
-      # 7️⃣ Log in to Amazon ECR
+      # 8️⃣ Log in to Amazon ECR
       - name: Log in to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
         id: login-ecr
 
-      # 8️⃣ Build and push Docker image
+      # 9️⃣ Build and push Docker image
       - name: Build and push Docker image
         run: |
           IMAGE_TAG=${{ github.sha }}
@@ -71,46 +86,31 @@ jobs:
             -t "$IMAGE_URI" \
             --push .
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
-      # 9️⃣ Set up kubectl
+
+      # 🔟 Setup kubectl
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'v1.30.0'
 
-      # 🔟 Configure kubeconfig for EKS
+      # 1️⃣1️⃣ Configure kubeconfig for EKS
       - name: Configure kubeconfig for EKS
         run: |
           aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
           kubectl get nodes
-      # 1️⃣1️⃣ Ensure Kubernetes deployment exists
-      - name: Create deployment if not exists
-        run: |
-          if ! kubectl get deployment ${{ env.IMAGE_REPO }} -n ${{ env.K8S_NAMESPACE }} >/dev/null 2>&1; then
-            echo "Deployment not found. Creating deployment..."
-            kubectl create deployment ${{ env.IMAGE_REPO }} \
-              --image=$IMAGE_URI -n ${{ env.K8S_NAMESPACE }}
-          fi
-      # 1️⃣2️⃣ Ensure service exists
-      - name: Create service if not exists
-        run: |
-          if ! kubectl get svc ${{ env.IMAGE_REPO }}-service -n ${{ env.K8S_NAMESPACE }} >/dev/null 2>&1; then
-            echo "Service not found. Creating LoadBalancer service..."
-            kubectl expose deployment ${{ env.IMAGE_REPO }} \
-              --type=LoadBalancer --name=${{ env.IMAGE_REPO }}-service -n ${{ env.K8S_NAMESPACE }}
-          fi
-      # 1️⃣3️⃣ Update deployment with new image
+
+      # 1️⃣2️⃣ Deploy application to EKS
       - name: Deploy to EKS
         run: |
-          echo "Updating deployment with image: $IMAGE_URI"
-          kubectl set image deployment/${{ env.IMAGE_REPO }} \
-            ${{ env.IMAGE_REPO }}=$IMAGE_URI -n ${{ env.K8S_NAMESPACE }}
+          kubectl apply -f deployment.yaml
+          kubectl apply -f service.yaml
           echo "Waiting for rollout..."
           kubectl rollout status deployment/${{ env.IMAGE_REPO }} -n ${{ env.K8S_NAMESPACE }}
-      # 1️⃣4️⃣ Verify pods
+
+      # 1️⃣3️⃣ Verify pods and get LoadBalancer URL
       - name: Verify pods
         run: kubectl get pods -o wide -n ${{ env.K8S_NAMESPACE }}
 
-      # 1️⃣5️⃣ Get LoadBalancer URL
       - name: Get LoadBalancer URL
         id: get-url
         run: |
@@ -118,11 +118,12 @@ jobs:
                 -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "Live URL: http://$URL"
           echo "url=http://$URL" >> $GITHUB_OUTPUT
-      # 1️⃣6️⃣ Show live application link
+
       - name: Show live application link
         run: |
           echo "✅ Your app is live at:"
           echo "${{ steps.get-url.outputs.url }}"
-      # 1️⃣7️⃣ Cleanup Docker images
+
+      # 1️⃣4️⃣ Cleanup Docker images
       - name: Cleanup
         run: docker image prune -af
