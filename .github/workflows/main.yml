@@ -1,48 +1,87 @@
-name: CI/CD - Build and Deploy to EC2 via Ansible
+name: 🚀 Build & Deploy to EC2 via Docker + Ansible
 
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'ansible/**'
+      - 'Dockerfile'
+      - '**/*.py'
+      - '**/*.js'
+      - '**/*.yml'
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPO_NAME: my-app-repo                # 🔁 Change this to your ECR repository name
+      IMAGE_TAG: latest
 
     steps:
-      - name: Checkout source code
+      # Step 1️⃣: Checkout repository
+      - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      # Step 2️⃣: Configure AWS credentials (for ECR access)
+      - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Log in to Amazon ECR
+      # Step 3️⃣: Log in to Amazon ECR
+      - name: 🐳 Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Step 4️⃣: Build and push Docker image
+      - name: 🧱 Build, tag, and push Docker image
         run: |
-          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 332427206046.dkr.ecr.us-east-1.amazonaws.com
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}
+          echo "Building image: $IMAGE_URI"
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push multi-arch image
-        run: |
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            -t 332427206046.dkr.ecr.us-east-1.amazonaws.com/my-simple-app:latest \
-            --push .
-
-      - name: Deploy to EC2 via Ansible
+      # Step 5️⃣: SSH into EC2 and deploy via Ansible
+      - name: 🚀 Deploy to EC2 with Ansible
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script_stop: true
+          timeout: 90s
+          command_timeout: 30m
           script: |
+            echo "✅ Connected to EC2"
+
+            # Update dependencies
             sudo yum install -y ansible git awscli docker
+
+            # Ensure Docker is running
+            sudo systemctl enable docker
+            sudo systemctl start docker
+
+            # Log in to ECR from EC2
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+
+            # Set up Ansible project
             mkdir -p ~/ansible
             cd ~/ansible
-            echo "${{ github.event.repository.clone_url }}" 
-            git clone https://github.com/${{ github.repository }} app || (cd app && git pull)
+            if [ ! -d "app" ]; then
+              git clone https://github.com/Fluvia20079668/ansible.git app
+            else
+              cd app && git pull && cd ..
+            fi
+
+            # Pass image URI to Ansible as variable
             cd app/ansible
-            ansible-playbook -i inventory.ini deploy.yml
+            echo "🧠 Running Ansible playbook with image: ${{ env.IMAGE_TAG }}"
+            ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_image=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}"
+
+            echo "✅ Deployment complete!"
