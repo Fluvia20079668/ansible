@@ -1,3 +1,7 @@
+############################################
+# PROVIDER & TERRAFORM CONFIG
+############################################
+
 terraform {
   required_providers {
     aws = {
@@ -5,6 +9,8 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  required_version = ">= 1.5.0"
 }
 
 provider "aws" {
@@ -15,32 +21,27 @@ provider "aws" {
 # DATA SOURCES
 ############################################
 
-# Use existing VPC
+# Use existing VPC and Subnet
 data "aws_vpc" "selected" {
-  id = "vpc-0bde93db422608886" # replace with your actual VPC ID if different
+  id = "vpc-0446a38eda4d36f89"
 }
 
-# Use existing subnets in that VPC
-data "aws_subnets" "existing" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.selected.id]
-  }
+data "aws_subnet" "selected" {
+  id = "subnet-05d546bc66c5207ac"
 }
 
-# Optional: Use or create ECR repository
+# Reference existing ECR repository
 data "aws_ecr_repository" "app" {
   name = var.ecr_name
 }
 
 ############################################
-# EC2 INSTANCE AND SECURITY GROUP
+# SECURITY GROUP
 ############################################
 
-# Security group allowing SSH + HTTP
 resource "aws_security_group" "web_sg" {
   name        = "web-server-sg"
-  description = "Allow SSH and HTTP inbound traffic"
+  description = "Allow SSH and HTTP/App traffic"
   vpc_id      = data.aws_vpc.selected.id
 
   ingress {
@@ -52,9 +53,9 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
-    description = "Allow HTTP"
-    from_port   = 80
-    to_port     = 80
+    description = "Allow App Port"
+    from_port   = 8090
+    to_port     = 8090
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -67,33 +68,59 @@ resource "aws_security_group" "web_sg" {
   }
 
   tags = {
-    Name = "web-server-sg"
+    Name = "web-sg"
   }
 }
 
-# Key pair for SSH
+############################################
+# KEY PAIR
+############################################
+
 resource "aws_key_pair" "deployer" {
   key_name   = "deployer-key"
   public_key = file(var.public_key_path)
 }
 
-# EC2 instance (Ubuntu)
+############################################
+# EC2 INSTANCE (Docker Host)
+############################################
+
 resource "aws_instance" "web_server" {
   ami                    = var.ami_id
   instance_type          = "t3.micro"
   key_name               = aws_key_pair.deployer.key_name
   vpc_security_group_ids = [aws_security_group.web_sg.id]
-  subnet_id              = element(data.aws_subnets.existing.ids, 0)
+  subnet_id              = data.aws_subnet.selected.id
+  associate_public_ip_address = true
 
   user_data = <<-EOF
               #!/bin/bash
-              apt-get update -y
-              apt-get install -y docker.io
+              dnf update -y
+              dnf install -y docker awscli
               systemctl enable docker
               systemctl start docker
+
+              # Login to ECR
+              aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${data.aws_ecr_repository.app.repository_url}
+
+              # Pull and run app container
+              docker pull ${data.aws_ecr_repository.app.repository_url}:latest
+              docker run -d -p 8090:8090 --restart always ${data.aws_ecr_repository.app.repository_url}:latest
               EOF
 
   tags = {
     Name = "docker-web-server"
   }
+}
+
+############################################
+# OUTPUTS
+############################################
+
+output "ec2_public_ip" {
+  value = aws_instance.web_server.public_ip
+}
+
+output "app_url" {
+  value = "http://${aws_instance.web_server.public_ip}:8090"
 }
