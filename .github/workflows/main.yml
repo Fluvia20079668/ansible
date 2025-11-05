@@ -1,85 +1,48 @@
-name: Build, Terraform, and Push Docker Image to ECR
+name: CI/CD - Build and Deploy to EC2 via Ansible
 
 on:
   push:
-    branches:
-      - main
-
-env:
-  AWS_REGION: eu-north-1
-  IMAGE_REPO: my-simple-app
-  ECR_REGISTRY: 332427206046.dkr.ecr.eu-north-1.amazonaws.com
+    branches: [ "main" ]
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout source code
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: us-east-1
 
-      # 3️⃣ Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-
-      # 4️⃣ Terraform Init & Apply
-      - name: Terraform Init
-        working-directory: terraform
-        run: terraform init
-
-      - name: Terraform Apply
-        working-directory: terraform
-        run: terraform apply -auto-approve
-
-      # 5️⃣ Ensure ECR repository exists
-      - name: Create ECR repository if not exists
+      - name: Log in to Amazon ECR
         run: |
-          aws ecr describe-repositories --repository-names ${{ env.IMAGE_REPO }} >/dev/null 2>&1 || \
-          aws ecr create-repository --repository-name ${{ env.IMAGE_REPO }}
-          echo "✅ ECR repository ${{ env.IMAGE_REPO }} is ready."
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 332427206046.dkr.ecr.us-east-1.amazonaws.com
 
-      # 6️⃣ Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-          buildkitd-flags: --debug
 
-      # 7️⃣ Log in to Amazon ECR
-      - name: Log in to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-        id: login-ecr
-
-      # 8️⃣ Build and push Docker image
-      - name: Build and push Docker image
+      - name: Build and push multi-arch image
         run: |
-          IMAGE_TAG=${{ github.sha }}
-          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
-          IMAGE_URI="$ECR_REGISTRY/${{ env.IMAGE_REPO }}:$IMAGE_TAG"
-          echo "🚀 Building and pushing image: $IMAGE_URI"
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            -t "$IMAGE_URI" \
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -t 332427206046.dkr.ecr.us-east-1.amazonaws.com/my-simple-app:latest \
             --push .
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # 9️⃣ Show manual test instructions
-      - name: Display SSH and test instructions
-        run: |
-          echo "✅ Terraform has created your EC2 instance."
-          echo "You can now SSH into the server and run:"
-          echo ""
-          echo "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY"
-          echo "docker pull $ECR_REGISTRY/${{ env.IMAGE_REPO }}:${{ github.sha }}"
-          echo "docker run -d -p 80:80 $ECR_REGISTRY/${{ env.IMAGE_REPO }}:${{ github.sha }}"
-          echo ""
-          echo "Then open your EC2 public IP in the browser to verify your app is running."
+      - name: Deploy to EC2 via Ansible
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            sudo yum install -y ansible git awscli docker
+            mkdir -p ~/ansible
+            cd ~/ansible
+            echo "${{ github.event.repository.clone_url }}" 
+            git clone https://github.com/${{ github.repository }} app || (cd app && git pull)
+            cd app/ansible
+            ansible-playbook -i inventory.ini deploy.yml
