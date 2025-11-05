@@ -1,7 +1,6 @@
 ############################################
 # AWS Configuration
 ############################################
-
 variable "aws_region" {
   description = "AWS region for deployment"
   type        = string
@@ -9,37 +8,28 @@ variable "aws_region" {
 }
 
 ############################################
-# Networking Configuration
+# SSH Key Configuration
 ############################################
-
-variable "vpc_id" {
-  description = "Use an existing VPC ID (leave empty to create a new one)"
+variable "public_key_path" {
+  description = "Path to your SSH public key"
   type        = string
-  default     = "" # Set to "vpc-xxxx" if reusing an existing VPC
+  default     = "~/.ssh/id_rsa.pub"
 }
 
 ############################################
-# EKS Cluster Configuration
+# EC2 Configuration
 ############################################
-
-variable "eks_cluster_name" {
-  description = "Base name for the EKS cluster (random suffix added automatically)"
+variable "ami_id" {
+  description = "Ubuntu 22.04 AMI for eu-north-1"
   type        = string
-  default     = "terraform-eks-cluster"
-}
-
-variable "eks_role_name" {
-  description = "Base IAM role name for EKS cluster (random suffix avoids conflicts)"
-  type        = string
-  default     = "terraform-eks-cluster-role"
+  default     = "ami-0989fb15ce71ba39e"
 }
 
 ############################################
 # ECR Repository Configuration
 ############################################
-
 variable "ecr_name" {
-  description = "Existing ECR repository name (Terraform will reuse it)"
+  description = "Existing ECR repository name"
   type        = string
   default     = "my-simple-app"
 }
