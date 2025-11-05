@@ -17,7 +17,7 @@ provider "aws" {
 
 # Use existing VPC
 data "aws_vpc" "selected" {
-  id = "vpc-0bde93db422608886"
+  id = "vpc-0bde93db422608886" # replace with your actual VPC ID if different
 }
 
 # Use existing subnets in that VPC
@@ -28,68 +28,72 @@ data "aws_subnets" "existing" {
   }
 }
 
-# Existing ECR repository
+# Optional: Use or create ECR repository
 data "aws_ecr_repository" "app" {
   name = var.ecr_name
 }
 
 ############################################
-# IAM ROLE FOR EKS
+# EC2 INSTANCE AND SECURITY GROUP
 ############################################
 
-# EKS assume role policy
-data "aws_iam_policy_document" "eks_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["eks.amazonaws.com"]
-    }
-  }
-}
+# Security group allowing SSH + HTTP
+resource "aws_security_group" "web_sg" {
+  name        = "web-server-sg"
+  description = "Allow SSH and HTTP inbound traffic"
+  vpc_id      = data.aws_vpc.selected.id
 
-# Random suffix to avoid duplicate names
-resource "random_id" "suffix" {
-  byte_length = 2
-}
-
-# IAM role for EKS cluster
-resource "aws_iam_role" "eks_cluster_role" {
-  name               = "${var.eks_role_name}-${random_id.suffix.hex}"
-  assume_role_policy = data.aws_iam_policy_document.eks_assume_role.json
-}
-
-# Attach EKS managed policies
-resource "aws_iam_role_policy_attachment" "cluster_policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.eks_cluster_role.name
-}
-
-resource "aws_iam_role_policy_attachment" "vpc_cni_policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-  role       = aws_iam_role.eks_cluster_role.name
-}
-
-############################################
-# EKS CLUSTER
-############################################
-
-resource "aws_eks_cluster" "eks" {
-  name     = "${var.eks_cluster_name}-${random_id.suffix.hex}"
-  role_arn = aws_iam_role.eks_cluster_role.arn
-
-  vpc_config {
-    subnet_ids             = data.aws_subnets.existing.ids
-    endpoint_public_access = true
+  ingress {
+    description = "Allow SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  depends_on = [
-    aws_iam_role_policy_attachment.cluster_policy,
-    aws_iam_role_policy_attachment.vpc_cni_policy
-  ]
+  ingress {
+    description = "Allow HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   tags = {
-    Name        = "EKS-Cluster"
-    Environment = "Development"
+    Name = "web-server-sg"
+  }
+}
+
+# Key pair for SSH
+resource "aws_key_pair" "deployer" {
+  key_name   = "deployer-key"
+  public_key = file(var.public_key_path)
+}
+
+# EC2 instance (Ubuntu)
+resource "aws_instance" "web_server" {
+  ami                    = var.ami_id
+  instance_type          = "t3.micro"
+  key_name               = aws_key_pair.deployer.key_name
+  vpc_security_group_ids = [aws_security_group.web_sg.id]
+  subnet_id              = element(data.aws_subnets.existing.ids, 0)
+
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update -y
+              apt-get install -y docker.io
+              systemctl enable docker
+              systemctl start docker
+              EOF
+
+  tags = {
+    Name = "docker-web-server"
   }
 }
