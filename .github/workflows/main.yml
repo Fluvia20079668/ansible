@@ -1,4 +1,4 @@
-name: Build, Terraform, and Deploy to ECR & EKS
+name: Build, Terraform, and Push Docker Image to ECR
 
 on:
   push:
@@ -9,7 +9,6 @@ env:
   AWS_REGION: eu-north-1
   IMAGE_REPO: my-simple-app
   ECR_REGISTRY: 332427206046.dkr.ecr.eu-north-1.amazonaws.com
-  K8S_NAMESPACE: default
 
 jobs:
   build-and-deploy:
@@ -20,21 +19,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # 2️⃣ Install Ansible and run playbook
-      - name: Install Ansible
-        run: |
-          sudo apt update
-          sudo apt install -y ansible
-          ansible --version
-
-      - name: Run Ansible playbook
-        run: |
-          echo "🔧 Running Ansible playbook to configure EC2 server..."
-          ansible-playbook -i ansible/inventory.ini ansible/install_docker.yml
-        env:
-          ANSIBLE_HOST_KEY_CHECKING: "False"
-
-      # 3️⃣ Configure AWS credentials
+      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -42,11 +27,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 4️⃣ Setup Terraform
+      # 3️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      # 5️⃣ Terraform Init & Apply
+      # 4️⃣ Terraform Init & Apply
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
@@ -55,75 +40,46 @@ jobs:
         working-directory: terraform
         run: terraform apply -auto-approve
 
-      # 6️⃣ Ensure ECR repository exists
+      # 5️⃣ Ensure ECR repository exists
       - name: Create ECR repository if not exists
         run: |
           aws ecr describe-repositories --repository-names ${{ env.IMAGE_REPO }} >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name ${{ env.IMAGE_REPO }}
-          echo "ECR repository ${{ env.IMAGE_REPO }} is ready."
+          echo "✅ ECR repository ${{ env.IMAGE_REPO }} is ready."
 
-      # 7️⃣ Set up Docker Buildx
+      # 6️⃣ Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
           buildkitd-flags: --debug
 
-      # 8️⃣ Log in to Amazon ECR
+      # 7️⃣ Log in to Amazon ECR
       - name: Log in to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
         id: login-ecr
 
-      # 9️⃣ Build and push Docker image
+      # 8️⃣ Build and push Docker image
       - name: Build and push Docker image
         run: |
           IMAGE_TAG=${{ github.sha }}
           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
           IMAGE_URI="$ECR_REGISTRY/${{ env.IMAGE_REPO }}:$IMAGE_TAG"
-          echo "Building and pushing image: $IMAGE_URI"
+          echo "🚀 Building and pushing image: $IMAGE_URI"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             -t "$IMAGE_URI" \
             --push .
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # 🔟 Setup kubectl
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'v1.30.0'
-
-      # 1️⃣1️⃣ Configure kubeconfig for EKS
-      - name: Configure kubeconfig for EKS
+      # 9️⃣ Show manual test instructions
+      - name: Display SSH and test instructions
         run: |
-          aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-          kubectl get nodes
-
-      # 1️⃣2️⃣ Deploy application to EKS
-      - name: Deploy to EKS
-        run: |
-          kubectl apply -f deployment.yaml
-          kubectl apply -f service.yaml
-          echo "Waiting for rollout..."
-          kubectl rollout status deployment/${{ env.IMAGE_REPO }} -n ${{ env.K8S_NAMESPACE }}
-
-      # 1️⃣3️⃣ Verify pods and get LoadBalancer URL
-      - name: Verify pods
-        run: kubectl get pods -o wide -n ${{ env.K8S_NAMESPACE }}
-
-      - name: Get LoadBalancer URL
-        id: get-url
-        run: |
-          URL=$(kubectl get svc ${{ env.IMAGE_REPO }}-service -n ${{ env.K8S_NAMESPACE }} \
-                -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-          echo "Live URL: http://$URL"
-          echo "url=http://$URL" >> $GITHUB_OUTPUT
-
-      - name: Show live application link
-        run: |
-          echo "✅ Your app is live at:"
-          echo "${{ steps.get-url.outputs.url }}"
-
-      # 1️⃣4️⃣ Cleanup Docker images
-      - name: Cleanup
-        run: docker image prune -af
+          echo "✅ Terraform has created your EC2 instance."
+          echo "You can now SSH into the server and run:"
+          echo ""
+          echo "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY"
+          echo "docker pull $ECR_REGISTRY/${{ env.IMAGE_REPO }}:${{ github.sha }}"
+          echo "docker run -d -p 80:80 $ECR_REGISTRY/${{ env.IMAGE_REPO }}:${{ github.sha }}"
+          echo ""
+          echo "Then open your EC2 public IP in the browser to verify your app is running."
