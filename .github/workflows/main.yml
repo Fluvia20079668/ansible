@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1
-      ECR_REPO_NAME: my-app-repo                # 🔁 Change this to your ECR repository name
+      ECR_REPO_NAME: my-simple-app           # ✅ FIXED — matches your actual ECR repo
       IMAGE_TAG: latest
 
     steps:
@@ -23,7 +23,7 @@ jobs:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2️⃣: Configure AWS credentials (for ECR access)
+      # Step 2️⃣: Configure AWS credentials (from GitHub secrets)
       - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -31,12 +31,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 3️⃣: Log in to Amazon ECR
+      # Step 3️⃣: Log in to ECR
       - name: 🐳 Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Step 4️⃣: Build and push Docker image
+      # Step 4️⃣: Ensure the ECR repository exists (auto-create if missing)
+      - name: 🏗️ Ensure ECR Repository Exists
+        run: |
+          aws ecr describe-repositories --repository-names ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }} || \
+          aws ecr create-repository --repository-name ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }}
+
+      # Step 5️⃣: Build and push Docker image
       - name: 🧱 Build, tag, and push Docker image
         run: |
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}
@@ -45,7 +51,7 @@ jobs:
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # Step 5️⃣: SSH into EC2 and deploy via Ansible
+      # Step 6️⃣: SSH into EC2 and deploy via Ansible
       - name: 🚀 Deploy to EC2 with Ansible
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -70,7 +76,7 @@ jobs:
             # Log in to ECR from EC2
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
 
-            # Set up Ansible project
+            # Prepare Ansible workspace
             mkdir -p ~/ansible
             cd ~/ansible
             if [ ! -d "app" ]; then
@@ -79,9 +85,9 @@ jobs:
               cd app && git pull && cd ..
             fi
 
-            # Pass image URI to Ansible as variable
+            # Run playbook with new image
             cd app/ansible
-            echo "🧠 Running Ansible playbook with image: ${{ env.IMAGE_TAG }}"
+            echo "🚀 Deploying Docker image..."
             ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_image=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}"
 
             echo "✅ Deployment complete!"
