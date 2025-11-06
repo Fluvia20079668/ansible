@@ -17,5 +17,5 @@ variable "ecr_repo_name" {
 variable "instance_type" {
   type        = string
   description = "EC2 instance type"
-  default     = "t4g.micro"
+  default     = "t3.micro" # x86_64 compatible
 }
