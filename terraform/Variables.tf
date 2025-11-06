@@ -19,3 +19,8 @@ variable "instance_type" {
   description = "EC2 instance type"
   default     = "t3.micro" # x86_64 compatible
 }
+variable "use_existing_key" {
+  description = "Set true if using existing EC2 key pair from AWS console"
+  type        = bool
+  default     = true
+}
