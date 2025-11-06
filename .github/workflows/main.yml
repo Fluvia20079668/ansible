@@ -19,11 +19,9 @@ jobs:
       IMAGE_TAG: latest
 
     steps:
-      # 1️⃣ Checkout repo
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials
       - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -31,39 +29,35 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Setup Terraform
       - name: 🛠️ Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
 
-      # 4️⃣ Terraform init
       - name: ⛏️ Terraform Init
         working-directory: terraform
         run: terraform init
 
-      # 5️⃣ Terraform apply
       - name: 🌍 Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
 
-      # 6️⃣ Get Terraform outputs safely
-      - name: 📡 Get Terraform outputs
-        working-directory: terraform
+      - name: 📡 Get Terraform outputs safely
         id: tf_outputs
+        working-directory: terraform
         run: |
-          # Extract outputs using JSON to avoid debug metadata
-          EC2_PUBLIC_IP=$(terraform output -json ec2_public_ip | jq -r '.')
-          ECR_URI=$(terraform output -json ecr_repository_uri | jq -r '.')
-          PRIVATE_KEY_PEM=$(terraform output -raw private_key_pem)
+          # Extract clean outputs
+          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip 2>/dev/null || echo "")
+          ECR_URI=$(terraform output -raw ecr_repository_uri 2>/dev/null || echo "")
+          PRIVATE_KEY_PEM=$(terraform output -raw private_key_pem 2>/dev/null || echo "")
 
-          # Validate outputs
+          # Validate required outputs
           if [ -z "$EC2_PUBLIC_IP" ] || [ -z "$ECR_URI" ]; then
-            echo "❌ Terraform outputs missing!"
+            echo "❌ Missing Terraform outputs. Check your Terraform definitions."
+            terraform output
             exit 1
           fi
 
-          # Save variables to GitHub environment
           echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
@@ -71,22 +65,19 @@ jobs:
           echo "$PRIVATE_KEY_PEM" > deploy_key.pem
           chmod 600 deploy_key.pem
 
-      # 7️⃣ Log in to ECR
       - name: 🐳 Docker Login to ECR
         run: |
           echo "Logging into ECR: $ECR_URI"
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_URI
 
-      # 8️⃣ Build, tag, and push Docker image
       - name: 🧱 Build and Push Docker Image
         run: |
-          IMAGE_URI=$ECR_URI:$IMAGE_TAG
-          echo "Building Docker image: $IMAGE_URI"
+          IMAGE_URI=$ECR_URI:${{ env.IMAGE_TAG }}
+          echo "Building and pushing $IMAGE_URI"
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # 9️⃣ Deploy Docker container on EC2
       - name: 🚀 Deploy Docker on EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i deploy_key.pem ec2-user@$EC2_PUBLIC_IP << EOF
@@ -99,6 +90,5 @@ jobs:
             sudo docker run -d -p 8090:8090 --name my-app --restart always $IMAGE_URI
           EOF
 
-      # 🔟 Display live app URL
       - name: 🌐 App URL
-        run: echo "✅ Your app is live at http://$EC2_PUBLIC_IP:8090"
+        run: echo "✅ Your app is live at: http://$EC2_PUBLIC_IP:8090"
