@@ -10,21 +10,18 @@ env:
   ECR_REPO_NAME: my-simple-app
   TF_DIR: terraform
   DOCKER_IMAGE_TAG: latest
-  KEY_PAIR_NAME: deployer-key   # Must match Terraform var
+  KEY_PAIR_NAME: deployer-key
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
 
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -32,22 +29,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Install jq
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      # 4️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
 
-      # 5️⃣ Terraform Init
       - name: Terraform Init
         working-directory: ${{ env.TF_DIR }}
         run: terraform init
 
-      # 6️⃣ Terraform Apply
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
         run: |
@@ -55,9 +48,8 @@ jobs:
             -var "aws_region=${{ env.AWS_REGION }}" \
             -var "ecr_repo_name=${{ env.ECR_REPO_NAME }}" \
             -var "key_pair_name=${{ env.KEY_PAIR_NAME }}" \
-            -var "instance_type=t4g.micro"
+            -var "instance_type=t3.micro"
 
-      # 7️⃣ Extract Terraform outputs
       - name: Extract Terraform outputs
         id: tf_output
         working-directory: ${{ env.TF_DIR }}
@@ -67,57 +59,42 @@ jobs:
           echo "ECR_URI=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value)" >> $GITHUB_ENV
           echo "PRIVATE_KEY=$(echo "$TF_OUTPUT" | jq -r .private_key_pem.value)" >> $GITHUB_ENV
 
-      # 8️⃣ Save private key if created
       - name: Save private key
         if: ${{ env.PRIVATE_KEY != 'Use existing key pair' }}
         run: |
           echo "$PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-      # 9️⃣ Wait for EC2
       - name: Wait for EC2
         run: sleep 30
 
-      # 🔟 Login to ECR
       - name: Login to ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin ${{ env.ECR_URI }}
 
-      # 1️⃣1️⃣ Build Docker image
       - name: Build Docker image
         run: docker build -t ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} .
 
-      # 1️⃣2️⃣ Tag Docker image for ECR
       - name: Tag Docker image
         run: |
           docker tag ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
 
-      # 1️⃣3️⃣ Push Docker image to ECR
       - name: Push Docker image
         run: |
           docker push ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
 
-      # 1️⃣4️⃣ Deploy Docker container to EC2
       - name: Deploy Docker container to EC2
         run: |
-          # Choose correct SSH key
-          if [ -f private_key.pem ]; then
-            SSH_KEY=private_key.pem
-          else
-            echo "Using existing key pair, make sure you have it locally for SSH access"
-            exit 1
-          fi
-
+          SSH_KEY=private_key.pem
           ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@"${EC2_PUBLIC_IP}" <<EOF
           sudo systemctl start docker || sudo service docker start
           sudo docker stop my-simple-app || true
           sudo docker rm my-simple-app || true
           sudo docker pull ${ECR_URI}:${DOCKER_IMAGE_TAG}
           sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:${DOCKER_IMAGE_TAG}
-            EOF
+          EOF
 
-      # 1️⃣5️⃣ Output live URL
-      - name: Show live web page
+      - name: Show live URL
         run: |
           echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
