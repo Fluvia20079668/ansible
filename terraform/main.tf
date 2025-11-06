@@ -20,7 +20,6 @@ provider "aws" {
 # DATA SOURCES
 ############################################
 
-# Use existing VPC and Subnet
 data "aws_vpc" "selected" {
   id = "vpc-07f0ec8836bb93715"
 }
@@ -29,7 +28,6 @@ data "aws_subnet" "selected" {
   id = "subnet-022d77f082de78109"
 }
 
-# Reference existing ECR repository
 data "aws_ecr_repository" "app" {
   name = var.ecr_name
 }
@@ -72,12 +70,17 @@ resource "aws_security_group" "web_sg" {
 }
 
 ############################################
-# KEY PAIR
+# SSH KEY PAIR
 ############################################
+
+resource "tls_private_key" "deployer" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
 
 resource "aws_key_pair" "deployer" {
   key_name   = "deployer-key"
-  public_key = file(var.public_key_path)
+  public_key = tls_private_key.deployer.public_key_openssh
 }
 
 ############################################
@@ -126,4 +129,10 @@ output "app_url" {
 
 output "ecr_repository_uri" {
   value = data.aws_ecr_repository.app.repository_url
+}
+
+# Output the private key for GitHub Actions
+output "private_key_pem" {
+  value     = tls_private_key.deployer.private_key_pem
+  sensitive = true
 }
