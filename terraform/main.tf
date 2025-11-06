@@ -16,26 +16,60 @@ provider "aws" {
   region = var.aws_region
 }
 
-# 🔹 Create ECR repository
-resource "aws_ecr_repository" "app_repo" {
-  name = var.ecr_repo_name
+# -------------------------
+# ECR Repository (create if missing)
+# -------------------------
+data "aws_ecr_repository" "existing" {
+  count = 1
+  name  = var.ecr_repo_name
+  lifecycle {
+    ignore_errors = true
+  }
 }
 
-# 🔹 Create EC2 key pair (if doesn't exist)
+resource "aws_ecr_repository" "app_repo" {
+  count = length(data.aws_ecr_repository.existing) == 0 ? 1 : 0
+  name  = var.ecr_repo_name
+}
+
+# -------------------------
+# EC2 Key Pair
+# -------------------------
+data "aws_key_pair" "existing" {
+  count    = 1
+  key_name = var.key_pair_name
+  lifecycle {
+    ignore_errors = true
+  }
+}
+
 resource "tls_private_key" "ec2_key" {
+  count     = length(data.aws_key_pair.existing) == 0 ? 1 : 0
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "aws_key_pair" "deployer" {
+  count      = length(data.aws_key_pair.existing) == 0 ? 1 : 0
   key_name   = var.key_pair_name
-  public_key = tls_private_key.ec2_key.public_key_openssh
+  public_key = tls_private_key.ec2_key[0].public_key_openssh
 }
 
-# 🔹 Security group for EC2
+# -------------------------
+# Security Group
+# -------------------------
+data "aws_security_group" "existing" {
+  count  = 1
+  filter {
+    name   = "group-name"
+    values = ["app-sg"]
+  }
+}
+
 resource "aws_security_group" "app_sg" {
+  count       = length(data.aws_security_group.existing) == 0 ? 1 : 0
   name        = "app-sg"
-  description = "Allow inbound SSH and app traffic"
+  description = "Allow SSH and app traffic"
 
   ingress {
     from_port   = 22
@@ -59,31 +93,34 @@ resource "aws_security_group" "app_sg" {
   }
 }
 
-# 🔹 EC2 Instance
+# -------------------------
+# EC2 Instance
+# -------------------------
 resource "aws_instance" "app_server" {
-  ami                    = "ami-06c39ed6b42908a36" # Amazon Linux 2 (EU North 1)
+  ami                    = "ami-06c39ed6b42908a36" # Amazon Linux 2 EU-North-1
   instance_type          = var.instance_type
-  key_name               = aws_key_pair.deployer.key_name
-  vpc_security_group_ids = [aws_security_group.app_sg.id]
+  key_name               = length(aws_key_pair.deployer) > 0 ? aws_key_pair.deployer[0].key_name : var.key_pair_name
+  vpc_security_group_ids = length(aws_security_group.app_sg) > 0 ? [aws_security_group.app_sg[0].id] : [data.aws_security_group.existing[0].id]
+  associate_public_ip_address = true
 
   tags = {
     Name = "MyAppServer"
   }
 }
 
-# 🔹 Outputs (must be at root level)
+# -------------------------
+# Outputs
+# -------------------------
 output "ec2_public_ip" {
-  description = "Public IP of EC2"
-  value       = aws_instance.app_server.public_ip
+  value = aws_instance.app_server.public_ip
 }
 
 output "ecr_repository_uri" {
-  description = "ECR repository URI"
-  value       = aws_ecr_repository.app_repo.repository_url
+  value = length(aws_ecr_repository.app_repo) > 0 ? aws_ecr_repository.app_repo[0].repository_url : data.aws_ecr_repository.existing[0].repository_url
 }
 
 output "private_key_pem" {
-  description = "Private key for SSH access"
-  value       = tls_private_key.ec2_key.private_key_pem
-  sensitive   = true
+  value     = length(tls_private_key.ec2_key) > 0 ? tls_private_key.ec2_key[0].private_key_pem : "Use existing key pair"
+  sensitive = true
 }
+
