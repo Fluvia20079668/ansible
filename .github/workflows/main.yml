@@ -29,7 +29,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Install jq (used for parsing Terraform output)
+      # 3️⃣ Install jq (for Terraform output parsing)
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
@@ -44,7 +44,7 @@ jobs:
         working-directory: ${{ env.TF_DIR }}
         run: terraform init
 
-      # 6️⃣ Terraform Apply (creates EC2 + ECR)
+      # 6️⃣ Terraform Apply (creates EC2 + ECR + Key)
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
         run: |
@@ -101,7 +101,7 @@ jobs:
       - name: Deploy Docker container to EC2
         run: |
           SSH_KEY=private_key.pem
-          ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@"${EC2_PUBLIC_IP}" <<EOF
+          ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@"${EC2_PUBLIC_IP}" <<'EOF'
             sudo systemctl start docker || sudo service docker start
             sudo docker stop my-simple-app || true
             sudo docker rm my-simple-app || true
@@ -111,4 +111,5 @@ jobs:
 
       # 1️⃣5️⃣ Output live app URL
       - name: Show live URL
-        run: echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:8090"
+        run: |
+          echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:8090"
