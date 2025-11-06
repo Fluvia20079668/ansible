@@ -95,12 +95,12 @@ jobs:
       - name: Deploy Docker container to EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i private_key.pem ec2-user@"${EC2_PUBLIC_IP}" <<'EOF'
-sudo systemctl start docker || sudo service docker start
-sudo docker stop my-simple-app || true
-sudo docker rm my-simple-app || true
-sudo docker pull ${ECR_URI}:${DOCKER_IMAGE_TAG}
-sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:${DOCKER_IMAGE_TAG}
-EOF
+          sudo systemctl start docker || sudo service docker start
+          sudo docker stop my-simple-app || true
+          sudo docker rm my-simple-app || true
+          sudo docker pull ${ECR_URI}:${DOCKER_IMAGE_TAG}
+          sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:${DOCKER_IMAGE_TAG}
+          EOF
 
       # 1️⃣5️⃣ Output live URL
       - name: Show live web page
