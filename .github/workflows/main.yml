@@ -33,7 +33,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4️⃣ Build, tag, and push Docker image to ECR with commit SHA
+      # 4️⃣ Build, tag, and push Docker image
       - name: Build, tag, and push image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -60,12 +60,12 @@ jobs:
         run: |
           ssh -i ~/.ssh/network.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "echo '✅ Connected to EC2 successfully.'"
 
-      # 7️⃣ Deploy Docker container with cleanup, using commit SHA
+      # 7️⃣ Deploy Docker container on EC2 with cleanup
       - name: Deploy on EC2
         env:
           COMMIT_SHA: ${{ github.sha }}
         run: |
-          ssh -i ~/.ssh/network.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST << 'EOF'
+          ssh -i ~/.ssh/network.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "export COMMIT_SHA=${COMMIT_SHA} && bash -s" << 'EOF'
             set -e
 
             echo "🧹 Cleaning up old containers..."
@@ -76,7 +76,7 @@ jobs:
 
             echo "📦 Pulling latest and commit-specific images..."
             docker pull 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
-            docker pull 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:${COMMIT_SHA}
+            docker pull 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:$COMMIT_SHA
 
             echo "🚀 Starting container with latest image..."
             docker run -d -p 80:8090 --name my-simple-app 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
