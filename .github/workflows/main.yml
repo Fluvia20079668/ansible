@@ -3,12 +3,6 @@ name: 🚀 Build & Deploy to EC2 via Docker + Ansible
 on:
   push:
     branches: [ "main" ]
-    paths:
-      - 'ansible/**'
-      - 'Dockerfile'
-      - '**/*.py'
-      - '**/*.js'
-      - '**/*.yml'
 
 jobs:
   deploy:
@@ -17,13 +11,12 @@ jobs:
       AWS_REGION: us-east-1
       ECR_REPO_NAME: my-simple-app
       IMAGE_TAG: latest
+      SG_ID: sg-xxxxxxxxxxxx  # <-- Replace with your EC2 security group ID
 
     steps:
-      # Step 1️⃣: Checkout repository
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2️⃣: Configure AWS credentials
       - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -31,71 +24,55 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 3️⃣: Log in to ECR
       - name: 🐳 Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Step 4️⃣: Ensure ECR repository exists
-      - name: 🏗️ Ensure ECR Repository Exists
-        run: |
-          aws ecr describe-repositories --repository-names ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }} || \
-          aws ecr create-repository --repository-name ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }}
-
-      # Step 5️⃣: Build and push Docker image
-      - name: 🧱 Build, tag, and push Docker image
+      - name: 🧱 Build and push Docker image
         run: |
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}
-          echo "Building image: $IMAGE_URI"
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # Step 6️⃣: Prepare SSH key
+      - name: 🔐 Add temporary SSH rule for GitHub Actions
+        id: add-sg-rule
+        run: |
+          RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
+          echo "GitHub Actions runner public IP: $RUNNER_IP"
+          aws ec2 authorize-security-group-ingress \
+            --group-id ${{ env.SG_ID }} \
+            --protocol tcp \
+            --port 22 \
+            --cidr ${RUNNER_IP}/32
+
       - name: 🔑 Setup SSH Key
         run: |
-          mkdir -p /github/home/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /github/home/.ssh/id_rsa
-          chmod 600 /github/home/.ssh/id_rsa
-          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> /github/home/.ssh/known_hosts
-          echo "✅ SSH key setup complete"
+          mkdir -p $HOME/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > $HOME/.ssh/id_rsa
+          chmod 600 $HOME/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> $HOME/.ssh/known_hosts
 
-      # Step 7️⃣: Test SSH connectivity and show exact errors
       - name: 🔌 Test SSH Connection
         run: |
-          set -o pipefail
-          echo "Testing SSH connection..."
-          echo "SSH User: ${{ secrets.SSH_USER }}"
-          echo "SSH Host: ${{ secrets.SSH_HOST }}"
-          ssh -i /github/home/.ssh/id_rsa -o StrictHostKeyChecking=no "${{ secrets.SSH_USER }}"@"${{ secrets.SSH_HOST }}" \
-          "echo ✅ SSH connection successful" || \
-          (echo "❌ SSH connection failed. Check your SSH_USER, SSH_HOST, and SSH_PRIVATE_KEY secrets." && exit 1)
+          ssh -i $HOME/.ssh/id_rsa -o StrictHostKeyChecking=no "${{ secrets.SSH_USER }}"@"${{ secrets.SSH_HOST }}" \
+          "echo ✅ SSH connection successful"
 
-      # Step 8️⃣: Deploy to EC2 with Ansible
       - name: 🚀 Deploy to EC2 with Ansible
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key_path: /github/home/.ssh/id_rsa
+          key_path: $HOME/.ssh/id_rsa
           port: 22
           script_stop: true
           timeout: 90s
           command_timeout: 30m
           script: |
-            echo "✅ Connected to EC2"
-
-            # Install dependencies
             sudo yum install -y ansible git awscli docker
-
-            # Ensure Docker is running
             sudo systemctl enable docker
             sudo systemctl start docker
-
-            # Log in to ECR from EC2
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-
-            # Prepare Ansible workspace
             mkdir -p ~/ansible
             cd ~/ansible
             if [ ! -d "app" ]; then
@@ -103,10 +80,15 @@ jobs:
             else
               cd app && git pull && cd ..
             fi
-
-            # Run playbook with new image
             cd app/ansible
-            echo "🚀 Deploying Docker image..."
             ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_image=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}"
 
-            echo "✅ Deployment complete!"
+      - name: 🔒 Remove temporary SSH rule
+        if: always()
+        run: |
+          RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
+          aws ec2 revoke-security-group-ingress \
+            --group-id ${{ env.SG_ID }} \
+            --protocol tcp \
+            --port 22 \
+            --cidr ${RUNNER_IP}/32
