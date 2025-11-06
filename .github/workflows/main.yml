@@ -1,22 +1,23 @@
-name: Build, Push, and Deploy to EC2
+name: CI/CD Deploy to EC2
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REPO_NAME: my-simple-app
-  IMAGE_TAG: latest
-  IMAGE_URI: 456501836709.dkr.ecr.us-east-1.amazonaws.com/my-simple-app:latest
+  AWS_REGION: eu-north-1
+  ECR_REPO: 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app
+  EC2_HOST: 16.170.110.166
+  EC2_USER: ec2-user
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout your code
-      - name: Checkout repository
+      # 1️⃣ Checkout code
+      - name: Checkout source
         uses: actions/checkout@v4
 
       # 2️⃣ Configure AWS credentials
@@ -27,47 +28,48 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Log in to Amazon ECR
+      # 3️⃣ Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4️⃣ Build and push Docker image
-      - name: Build, tag, and push image to ECR
+      # 4️⃣ Build and push Docker image to ECR
+      - name: Build, tag, and push image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: latest
         run: |
-          docker build -t $ECR_REPO_NAME:$IMAGE_TAG .
-          docker tag $ECR_REPO_NAME:$IMAGE_TAG $IMAGE_URI
-          docker push $IMAGE_URI
+          docker build -t $ECR_REPO:$IMAGE_TAG .
+          docker push $ECR_REPO:$IMAGE_TAG
 
-      # 5️⃣ Deploy to EC2 using SSH (Appleboy Action)
-      - name: Deploy via SSH to EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 16.170.110.166
-          username: ec2-user
-          key: ${{ secrets.SSH_KEY }}
-          script_stop: true
-          timeout: 120s
-          command_timeout: 60m
-          script: |
-            echo "✅ Connected to EC2"
-            sudo yum install -y ansible git awscli docker
-            sudo systemctl enable docker
-            sudo systemctl start docker
+      # 5️⃣ Setup SSH key
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.NETWORK_PEM }}" > ~/.ssh/network.pem
+          chmod 400 ~/.ssh/network.pem
+          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
 
-            # Login to ECR
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin 456501836709.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+      # 6️⃣ Test SSH Connection
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/network.pem $EC2_USER@$EC2_HOST "echo '✅ Connected to EC2 successfully.'"
 
-            # Prepare Ansible workspace
-            mkdir -p ~/ansible
-            cd ~/ansible
-            if [ ! -d "app" ]; then
-              git clone https://github.com/Fluvia20079668/ansible.git app
-            else
-              cd app && git pull && cd ..
-            fi
+      # 7️⃣ Deploy new Docker container
+      - name: Deploy on EC2
+        run: |
+          ssh -i ~/.ssh/network.pem $EC2_USER@$EC2_HOST << 'EOF'
+            set -e
+            echo "🧹 Stopping old container (if exists)..."
+            docker stop my-simple-app || true
+            docker rm my-simple-app || true
 
-            cd app/ansible
-            echo "🚀 Deploying Docker image..."
-            ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_image=${{ env.IMAGE_URI }}"
+            echo "📦 Pulling latest image..."
+            docker pull 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
+
+            echo "🚀 Starting container..."
+            docker run -d -p 80:8090 --name my-simple-app 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
+
             echo "✅ Deployment complete!"
+            docker ps
+          EOF
