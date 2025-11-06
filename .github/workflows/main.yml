@@ -31,7 +31,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Install jq for parsing Terraform outputs
+      # 3️⃣ Install jq
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
@@ -67,18 +67,18 @@ jobs:
           echo "ECR_REGISTRY=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value | cut -d'/' -f1)" >> $GITHUB_ENV
           echo "PRIVATE_KEY=$(echo "$TF_OUTPUT" | jq -r .private_key_pem.value)" >> $GITHUB_ENV
 
-      # 8️⃣ Save private key
+      # 8️⃣ Save private key if created
       - name: Save private key
         if: ${{ env.PRIVATE_KEY != 'Use existing key pair' }}
         run: |
           echo "$PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-      # 9️⃣ Wait for EC2 to be ready
+      # 9️⃣ Wait for EC2
       - name: Wait for EC2
         run: sleep 30
 
-      # 🔟 Login to ECR (fixed)
+      # 🔟 Login to ECR
       - name: Login to ECR
         run: |
           echo "Logging into ECR registry ${{ env.ECR_REGISTRY }}"
@@ -110,7 +110,7 @@ jobs:
             sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:${DOCKER_IMAGE_TAG}
           EOF
 
-      # 1️⃣5️⃣ Show live app URL
+      # 1️⃣5️⃣ Show live URL
       - name: Show live URL
         run: |
           echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
