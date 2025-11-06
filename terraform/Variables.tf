@@ -5,9 +5,9 @@ variable "aws_region" {
 }
 
 variable "key_pair_name" {
-  type        = string
-  description = "Name of the EC2 Key Pair to use or create"
+  default = "network"
 }
+
 
 variable "ecr_repo_name" {
   type        = string
