@@ -1,94 +1,93 @@
-name: 🚀 Terraform + Docker CI/CD
+name: 🌍 Full CI/CD — Terraform + Docker + AWS
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
     paths:
-      - 'terraform/**'
-      - 'Dockerfile'
-      - '**/*.py'
-      - '**/*.js'
-      - '**/*.yml'
+      - "Dockerfile"
+      - "**/*.tf"
+      - "**/*.yml"
+      - "**/*.py"
+      - "**/*.js"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-north-1
-      ECR_REPO_NAME: my-simple-app
       IMAGE_TAG: latest
+      ECR_REPO_NAME: my-simple-app
 
     steps:
+      # 1️⃣ Checkout code
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🔑 Configure AWS Credentials
+      # 2️⃣ Configure AWS credentials
+      - name: 🔑 Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🛠️ Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+      # 3️⃣ Setup Terraform
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.0
+          terraform_version: 1.9.5
 
-      - name: ⛏️ Terraform Init
-        working-directory: terraform
+      # 4️⃣ Initialize Terraform
+      - name: 🚀 Terraform Init
         run: terraform init
 
-      - name: 🌍 Terraform Apply
-        working-directory: terraform
+      # 5️⃣ Apply Terraform (auto-approve)
+      - name: 🏗️ Terraform Apply
+        id: apply
         run: terraform apply -auto-approve
 
-      - name: 📡 Get Terraform outputs safely
-        id: tf_outputs
-        working-directory: terraform
+      # 6️⃣ Capture Terraform outputs safely (no debug noise)
+      - name: 📦 Get Terraform Outputs
+        id: outputs
         run: |
-          # Extract clean outputs
-          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip 2>/dev/null || echo "")
-          ECR_URI=$(terraform output -raw ecr_repository_uri 2>/dev/null || echo "")
-          PRIVATE_KEY_PEM=$(terraform output -raw private_key_pem 2>/dev/null || echo "")
-
-          # Validate required outputs
-          if [ -z "$EC2_PUBLIC_IP" ] || [ -z "$ECR_URI" ]; then
-            echo "❌ Missing Terraform outputs. Check your Terraform definitions."
-            terraform output
-            exit 1
-          fi
-
+          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)
+          ECR_URI=$(terraform output -raw ecr_repository_uri)
           echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
-          # Save private key for SSH
-          echo "$PRIVATE_KEY_PEM" > deploy_key.pem
-          chmod 600 deploy_key.pem
-
-      - name: 🐳 Docker Login to ECR
+      # 7️⃣ Log in to Amazon ECR
+      - name: 🐳 Login to Amazon ECR
         run: |
-          echo "Logging into ECR: $ECR_URI"
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_URI
+          echo "🔐 Logging into ECR: $ECR_URI"
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
 
-      - name: 🧱 Build and Push Docker Image
+      # 8️⃣ Build and Push Docker Image
+      - name: 🧱 Build & Push Docker image
         run: |
-          IMAGE_URI=$ECR_URI:${{ env.IMAGE_TAG }}
-          echo "Building and pushing $IMAGE_URI"
+          IMAGE_URI=${ECR_URI}:${IMAGE_TAG}
+          echo "🏗️ Building image: $IMAGE_URI"
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      - name: 🚀 Deploy Docker on EC2
-        run: |
-          ssh -o StrictHostKeyChecking=no -i deploy_key.pem ec2-user@$EC2_PUBLIC_IP << EOF
-            sudo yum install -y docker awscli
-            sudo systemctl enable docker
+      # 9️⃣ Deploy the container on EC2 using SSH
+      - name: 🚀 Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.EC2_PUBLIC_IP }}
+          username: ec2-user
+          key: ${{ steps.apply.outputs.private_key_pem || secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "✅ Connected to EC2"
+            sudo yum install -y docker
             sudo systemctl start docker
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin $ECR_URI
-            sudo docker stop my-app || true
-            sudo docker rm my-app || true
-            sudo docker run -d -p 8090:8090 --name my-app --restart always $IMAGE_URI
-          EOF
+            sudo docker ps -q --filter "name=my-simple-app" | xargs -r sudo docker stop
+            sudo docker ps -aq --filter "name=my-simple-app" | xargs -r sudo docker rm
+            sudo docker pull ${{ env.IMAGE_URI }}
+            sudo docker run -d -p 8090:80 --name my-simple-app ${{ env.IMAGE_URI }}
 
-      - name: 🌐 App URL
-        run: echo "✅ Your app is live at: http://$EC2_PUBLIC_IP:8090"
+      # 🔟 Print Live Web App URL
+      - name: 🌐 Show Live Web URL
+        run: |
+          echo "✅ Deployment successful!"
+          echo "🌍 Live Web App: http://${{ env.EC2_PUBLIC_IP }}:8090"
