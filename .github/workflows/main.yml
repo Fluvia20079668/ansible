@@ -1,10 +1,10 @@
-name: 🚀 Build & Deploy to EC2 via Docker + Ansible
+name: 🚀 Terraform + Docker CI/CD to EC2
 
 on:
   push:
     branches: [ "main" ]
     paths:
-      - 'ansible/**'
+      - 'terraform/**'
       - 'Dockerfile'
       - '**/*.py'
       - '**/*.js'
@@ -14,16 +14,23 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: us-east-1
-      ECR_REPO_NAME: my-simple-app           # ✅ FIXED — matches your actual ECR repo
+      AWS_REGION: eu-north-1
+      ECR_REPO_NAME: my-simple-app
       IMAGE_TAG: latest
+      APP_PORT: 8090
 
     steps:
-      # Step 1️⃣: Checkout repository
+      # 1️⃣ Checkout code
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2️⃣: Configure AWS credentials (from GitHub secrets)
+      # 2️⃣ Setup Terraform
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
+
+      # 3️⃣ Configure AWS credentials
       - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -31,19 +38,36 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 3️⃣: Log in to ECR
+      # 4️⃣ Terraform init
+      - name: 🏗️ Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      # 5️⃣ Terraform apply (create EC2, SG, Key Pair)
+      - name: 🌱 Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve
+
+      # 6️⃣ Get EC2 public IP from Terraform output
+      - name: 🌐 Get EC2 Public IP
+        id: ec2_ip
+        working-directory: terraform
+        run: |
+          echo "EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+
+      # 7️⃣ Log in to ECR
       - name: 🐳 Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Step 4️⃣: Ensure the ECR repository exists (auto-create if missing)
+      # 8️⃣ Ensure ECR repository exists
       - name: 🏗️ Ensure ECR Repository Exists
         run: |
           aws ecr describe-repositories --repository-names ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }} || \
           aws ecr create-repository --repository-name ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }}
 
-      # Step 5️⃣: Build and push Docker image
-      - name: 🧱 Build, tag, and push Docker image
+      # 9️⃣ Build, tag, and push Docker image
+      - name: 🧱 Build, Tag, and Push Docker Image
         run: |
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}
           echo "Building image: $IMAGE_URI"
@@ -51,43 +75,61 @@ jobs:
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # Step 6️⃣: SSH into EC2 and deploy via Ansible
-      - name: 🚀 Deploy to EC2 with Ansible
+      # 🔟 SSH into EC2 and deploy Docker container
+      - name: 🚀 Deploy Docker on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}
+          host: ${{ env.EC2_PUBLIC_IP }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
-          passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script_stop: true
-          timeout: 90s
           command_timeout: 30m
           script: |
             echo "✅ Connected to EC2"
 
-            # Update dependencies
-            sudo yum install -y ansible git awscli docker
-
-            # Ensure Docker is running
+            # Install Docker if missing
+            if ! command -v docker &> /dev/null; then
+              sudo dnf install -y docker
+            fi
             sudo systemctl enable docker
             sudo systemctl start docker
 
-            # Log in to ECR from EC2
+            # Log in to ECR
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
 
-            # Prepare Ansible workspace
-            mkdir -p ~/ansible
-            cd ~/ansible
-            if [ ! -d "app" ]; then
-              git clone https://github.com/Fluvia20079668/ansible.git app
+            # Pull and run Docker container
+            docker pull ${{ env.IMAGE_URI }}
+            docker stop my-simple-app || true
+            docker rm my-simple-app || true
+            docker run -d -p ${{ env.APP_PORT }}:${{ env.APP_PORT }} --name my-simple-app --restart always ${{ env.IMAGE_URI }}
+
+            echo "✅ Docker container deployed and running!"
+
+      # 1️⃣1️⃣ Show live app URL with retries
+      - name: 🌍 Show live app URL
+        run: |
+          APP_URL="http://${{ env.EC2_PUBLIC_IP }}:${{ env.APP_PORT }}"
+          echo "🎉 Your app should be live at: $APP_URL"
+
+          # Retry loop (max 10 attempts, 5s interval)
+          MAX_RETRIES=10
+          SLEEP_TIME=5
+          SUCCESS=0
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" $APP_URL || echo "000")
+            if [ "$STATUS" -eq 200 ]; then
+              echo "✅ App is responding (HTTP 200) after $i attempts!"
+              SUCCESS=1
+              break
             else
-              cd app && git pull && cd ..
+              echo "⏳ Attempt $i: App not ready (HTTP $STATUS), retrying in $SLEEP_TIME seconds..."
+              sleep $SLEEP_TIME
             fi
+          done
 
-            # Run playbook with new image
-            cd app/ansible
-            echo "🚀 Deploying Docker image..."
-            ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_image=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}"
-
-            echo "✅ Deployment complete!"
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo "⚠️ App did not respond after $MAX_RETRIES attempts."
+            exit 1
+          fi
