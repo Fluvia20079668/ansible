@@ -1,0 +1,68 @@
+---
+- name: Deploy my-simple-app
+  hosts: ec2
+  become: yes
+  vars:
+    ecr_repo: "{{ ecr_repo }}"
+    image_tag: "latest"
+    commit_sha: "{{ commit_sha }}"
+    container_name: "my-simple-app"
+    exposed_port: 80
+    container_port: 8090
+
+  tasks:
+    - name: Ensure Docker is installed
+      ansible.builtin.yum:
+        name: docker
+        state: present
+
+    - name: Start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Login to ECR
+      ansible.builtin.shell: |
+        aws ecr get-login-password --region eu-north-1 | \
+        docker login --username AWS --password-stdin 456501836709.dkr.ecr.eu-north-1.amazonaws.com
+
+    - name: Cleanup old container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: absent
+        force_kill: yes
+        remove_volumes: yes
+
+    - name: Remove dangling images
+      community.docker.docker_image:
+        name: "<none>"
+        state: absent
+        prune: yes
+
+    - name: Pull Docker images
+      community.docker.docker_image:
+        name: "{{ ecr_repo }}"
+        tag: "{{ item }}"
+        source: pull
+      loop:
+        - "{{ image_tag }}"
+        - "{{ commit_sha }}"
+
+    - name: Ensure container is running
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        image: "{{ ecr_repo }}:{{ image_tag }}"
+        state: started
+        restart_policy: always
+        published_ports:
+          - "{{ exposed_port }}:{{ container_port }}"
+        pull: yes
+
+    - name: Get public IP
+      ansible.builtin.shell: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4"
+      register: public_ip
+
+    - name: Show live URL
+      ansible.builtin.debug:
+        msg: "✅ Your app is live at: http://{{ public_ip.stdout }}/"
