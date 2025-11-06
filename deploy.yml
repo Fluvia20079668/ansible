@@ -2,6 +2,7 @@
 - name: Deploy my-simple-app using shell Docker commands
   hosts: ec2
   become: yes
+  gather_facts: no    # <<< DISABLE FACT GATHERING
   vars:
     ecr_repo: "{{ ecr_repo }}"
     image_tag: "latest"
