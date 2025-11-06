@@ -1,33 +1,35 @@
 ---
 - name: Deploy my-simple-app (Docker already installed)
-  hosts: ec2
-  gather_facts: no   # Disable fact gathering
+  hosts: all
+  become: yes
   vars:
-    ecr_repo: "{{ ecr_repo }}"
-    image_tag: "latest"
-    commit_sha: "{{ commit_sha }}"
-    container_name: "my-simple-app"
-    exposed_port: 80
-    container_port: 8090
+    app_name: my-simple-app
+    app_image: 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
+    app_ports:
+      - "80:80"
 
   tasks:
-    - name: Cleanup old container
-      ansible.builtin.shell: |
-        docker rm -f {{ container_name }} || true
 
-    - name: Pull latest Docker image
-      ansible.builtin.shell: |
-        docker pull {{ ecr_repo }}:{{ image_tag }}
-        docker pull {{ ecr_repo }}:{{ commit_sha }}
+    - name: Ensure Docker service is running
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
 
-    - name: Run new container
-      ansible.builtin.shell: |
-        docker run -d -p {{ exposed_port }}:{{ container_port }} --name {{ container_name }} {{ ecr_repo }}:{{ image_tag }}
+    - name: Pull the latest image
+      community.docker.docker_image:
+        name: "{{ app_image }}"
+        source: pull
 
-    - name: Get public IP
-      ansible.builtin.shell: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4"
-      register: public_ip
+    - name: Remove old container if exists
+      community.docker.docker_container:
+        name: "{{ app_name }}"
+        state: absent
 
-    - name: Show live URL
-      ansible.builtin.debug:
-        msg: "✅ Your app is live at: http://{{ public_ip.stdout }}/"
+    - name: Start new container
+      community.docker.docker_container:
+        name: "{{ app_name }}"
+        image: "{{ app_image }}"
+        state: started
+        restart_policy: always
+        published_ports: "{{ app_ports }}"
