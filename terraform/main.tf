@@ -68,4 +68,20 @@ resource "aws_instance" "app_server" {
   tags = {
     Name = "MyAppServer"
   }
+output "ec2_public_ip" {
+  description = "Public IP of EC2"
+  value       = aws_instance.app_server.public_ip
+}
+
+output "ecr_repository_uri" {
+  description = "ECR repository URI"
+  value       = aws_ecr_repository.app_repo.repository_url
+}
+
+output "private_key_pem" {
+  description = "Private key for SSH access"
+  value       = tls_private_key.ec2_key.private_key_pem
+  sensitive   = true
+}
+
 }
