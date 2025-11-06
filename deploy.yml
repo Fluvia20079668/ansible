@@ -1,6 +1,7 @@
 ---
-- name: Deploy my-simple-app from AWS ECR
+- name: Minimal deploy of my-simple-app
   hosts: web
+  gather_facts: no
   become: yes
   vars:
     ecr_region: eu-north-1
@@ -9,25 +10,17 @@
     container_port: 80
 
   tasks:
-    - name: Install required packages
+
+    - name: Install Docker and dependencies
       ansible.builtin.yum:
         name:
+          - docker
           - yum-utils
           - device-mapper-persistent-data
           - lvm2
         state: present
 
-    - name: Enable Docker repository
-      ansible.builtin.command: amazon-linux-extras enable docker
-      args:
-        creates: /etc/yum.repos.d/docker.repo
-
-    - name: Install Docker
-      ansible.builtin.yum:
-        name: docker
-        state: present
-
-    - name: Start Docker service
+    - name: Start Docker
       ansible.builtin.service:
         name: docker
         state: started
@@ -39,19 +32,20 @@
         state: present
 
     - name: Login to AWS ECR
-      ansible.builtin.shell: |
-        aws ecr get-login-password --region {{ ecr_region }} | docker login --username AWS --password-stdin {{ ecr_repo }}
+      ansible.builtin.shell: >
+        aws ecr get-login-password --region {{ ecr_region }} |
+        docker login --username AWS --password-stdin {{ ecr_repo }}
       environment:
-        AWS_ACCESS_KEY_ID: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
-        AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+        AWS_ACCESS_KEY_ID: "{{ lookup('env','AWS_ACCESS_KEY_ID') }}"
+        AWS_SECRET_ACCESS_KEY: "{{ lookup('env','AWS_SECRET_ACCESS_KEY') }}"
         AWS_DEFAULT_REGION: "{{ ecr_region }}"
 
-    - name: Pull my-simple-app image from ECR
+    - name: Pull my-simple-app image
       community.docker.docker_image:
         name: "{{ ecr_repo }}:latest"
         source: pull
 
-    - name: Remove old container if exists
+    - name: Remove old container
       community.docker.docker_container:
         name: "{{ container_name }}"
         state: absent
