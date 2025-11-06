@@ -9,7 +9,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-
   required_version = ">= 1.5.0"
 }
 
@@ -21,6 +20,16 @@ provider "aws" {
 # DATA SOURCES
 ############################################
 
+# Use existing VPC and Subnet
+data "aws_vpc" "selected" {
+  id = "vpc-07f0ec8836bb93715"
+}
+
+data "aws_subnet" "selected" {
+  id = "subnet-022d77f082de78109"
+}
+
+# Reference existing ECR repository
 data "aws_ecr_repository" "app" {
   name = var.ecr_name
 }
@@ -32,7 +41,7 @@ data "aws_ecr_repository" "app" {
 resource "aws_security_group" "web_sg" {
   name        = "web-server-sg"
   description = "Allow SSH and App traffic"
-  vpc_id      = var.vpc_id
+  vpc_id      = data.aws_vpc.selected.id
 
   ingress {
     description = "Allow SSH"
@@ -72,15 +81,15 @@ resource "aws_key_pair" "deployer" {
 }
 
 ############################################
-# EC2 INSTANCE (Docker Host)
+# EC2 INSTANCE
 ############################################
 
 resource "aws_instance" "web_server" {
   ami                         = var.ami_id
-  instance_type               = var.instance_type
+  instance_type               = "t3.micro"
   key_name                    = aws_key_pair.deployer.key_name
-  subnet_id                   = var.subnet_id
   vpc_security_group_ids      = [aws_security_group.web_sg.id]
+  subnet_id                   = data.aws_subnet.selected.id
   associate_public_ip_address = true
 
   user_data = <<-EOF
@@ -90,12 +99,12 @@ resource "aws_instance" "web_server" {
               systemctl enable docker
               systemctl start docker
 
-              # Login to ECR
+              # Log in to ECR
               aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${data.aws_ecr_repository.app.repository_url}
 
               # Pull and run app container
               docker pull ${data.aws_ecr_repository.app.repository_url}:latest
-              docker run -d -p 8090:8090 --restart always --name my-simple-app ${data.aws_ecr_repository.app.repository_url}:latest
+              docker run -d -p 8090:8090 --restart always ${data.aws_ecr_repository.app.repository_url}:latest
               EOF
 
   tags = {
