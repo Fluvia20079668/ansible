@@ -1,19 +1,46 @@
+# -------------------------
+# Corrected Outputs
+# -------------------------
+
+# Default VPC
 output "vpc_id" {
-  description = "VPC ID"
-  value       = aws_vpc.main.id
+  description = "ID of the default VPC"
+  value       = data.aws_vpc.default.id
 }
 
+# One of the default subnets
 output "public_subnet_id" {
-  description = "Public Subnet ID"
-  value       = aws_subnet.public.id
+  description = "ID of the first default subnet"
+  value       = element(data.aws_subnets.default.ids, 0)
 }
 
+# App security group (created or existing)
 output "security_group_id" {
-  description = "Default Security Group ID"
-  value       = aws_security_group.default.id
+  description = "Security group ID used for the EC2 instance"
+  value = try(
+    aws_security_group.app_sg[0].id,
+    data.aws_security_group.existing_sg.id
+  )
 }
 
-output "ecr_repository_url" {
-  description = "ECR repository URL"
-  value       = aws_ecr_repository.app_repo.repository_url
+# ECR repository URL (created or existing)
+output "ecr_repository_uri" {
+  description = "ECR repository URI (created or reused)"
+  value = try(
+    aws_ecr_repository.app_repo[0].repository_url,
+    data.aws_ecr_repository.existing.repository_url
+  )
+}
+
+# EC2 public IP address
+output "ec2_public_ip" {
+  description = "Public IP of the EC2 instance"
+  value       = aws_instance.app_server.public_ip
+}
+
+# Private key (only output if a new key pair was created)
+output "private_key_pem" {
+  description = "Private key PEM (only if Terraform created a new key pair)"
+  value       = length(aws_key_pair.deployer) > 0 ? tls_private_key.ec2_key[0].private_key_pem : "Using existing key pair"
+  sensitive   = true
 }
