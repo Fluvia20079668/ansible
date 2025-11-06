@@ -57,6 +57,7 @@ jobs:
           TF_OUTPUT=$(terraform output -json)
           echo "EC2_PUBLIC_IP=$(echo "$TF_OUTPUT" | jq -r .ec2_public_ip.value)" >> $GITHUB_ENV
           echo "ECR_URI=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value)" >> $GITHUB_ENV
+          echo "ECR_REGISTRY=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value | cut -d'/' -f1)" >> $GITHUB_ENV
           echo "PRIVATE_KEY=$(echo "$TF_OUTPUT" | jq -r .private_key_pem.value)" >> $GITHUB_ENV
 
       - name: Save private key
@@ -70,9 +71,8 @@ jobs:
 
       - name: Login to ECR
         run: |
-          REGISTRY=$(echo "${{ env.ECR_URI }}" | cut -d'/' -f1)
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-          docker login --username AWS --password-stdin $REGISTRY
+          docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       - name: Build Docker image
         run: docker build -t ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} .
