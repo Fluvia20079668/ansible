@@ -33,11 +33,23 @@ data "aws_ecr_repository" "app" {
 }
 
 ############################################
+# RANDOM IDS FOR UNIQUE RESOURCE NAMES
+############################################
+
+resource "random_id" "sg_suffix" {
+  byte_length = 2
+}
+
+resource "random_id" "key_suffix" {
+  byte_length = 2
+}
+
+############################################
 # SECURITY GROUP
 ############################################
 
 resource "aws_security_group" "web_sg" {
-  name        = "web-server-sg"
+  name        = "web-server-sg-${random_id.sg_suffix.hex}"
   description = "Allow SSH and App traffic"
   vpc_id      = data.aws_vpc.selected.id
 
@@ -65,7 +77,7 @@ resource "aws_security_group" "web_sg" {
   }
 
   tags = {
-    Name = "web-sg"
+    Name = "web-sg-${random_id.sg_suffix.hex}"
   }
 }
 
@@ -79,7 +91,7 @@ resource "tls_private_key" "deployer" {
 }
 
 resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key"
+  key_name   = "deployer-key-${random_id.key_suffix.hex}"
   public_key = tls_private_key.deployer.public_key_openssh
 }
 
@@ -131,7 +143,6 @@ output "ecr_repository_uri" {
   value = data.aws_ecr_repository.app.repository_url
 }
 
-# Output the private key for GitHub Actions
 output "private_key_pem" {
   value     = tls_private_key.deployer.private_key_pem
   sensitive = true
