@@ -15,11 +15,9 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
-      # 1️⃣ Checkout repository
+      # 1️⃣ Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -31,7 +29,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Install jq
+      # 3️⃣ Install jq (used for parsing Terraform output)
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
@@ -46,7 +44,7 @@ jobs:
         working-directory: ${{ env.TF_DIR }}
         run: terraform init
 
-      # 6️⃣ Terraform Apply
+      # 6️⃣ Terraform Apply (creates EC2 + ECR)
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
         run: |
@@ -56,7 +54,7 @@ jobs:
             -var "key_pair_name=${{ env.KEY_PAIR_NAME }}" \
             -var "instance_type=t3.micro"
 
-      # 7️⃣ Extract Terraform outputs
+      # 7️⃣ Extract Terraform outputs (ECR & EC2 info)
       - name: Extract Terraform outputs
         id: tf_output
         working-directory: ${{ env.TF_DIR }}
@@ -67,21 +65,21 @@ jobs:
           echo "ECR_REGISTRY=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value | cut -d'/' -f1)" >> $GITHUB_ENV
           echo "PRIVATE_KEY=$(echo "$TF_OUTPUT" | jq -r .private_key_pem.value)" >> $GITHUB_ENV
 
-      # 8️⃣ Save private key if created
+      # 8️⃣ Save EC2 private key
       - name: Save private key
         if: ${{ env.PRIVATE_KEY != 'Use existing key pair' }}
         run: |
           echo "$PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-      # 9️⃣ Wait for EC2
+      # 9️⃣ Wait for EC2 to boot
       - name: Wait for EC2
-        run: sleep 30
+        run: sleep 40
 
-      # 🔟 Login to ECR
+      # 🔟 Login to AWS ECR
       - name: Login to ECR
         run: |
-          echo "Logging into ECR registry ${{ env.ECR_REGISTRY }}"
+          echo "Logging into ECR: ${{ env.ECR_REGISTRY }}"
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
@@ -92,13 +90,14 @@ jobs:
       # 1️⃣2️⃣ Tag Docker image for ECR
       - name: Tag Docker image
         run: |
-          docker tag ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
+          docker tag ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} \
+          ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
 
       # 1️⃣3️⃣ Push Docker image to ECR
       - name: Push Docker image
         run: docker push ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
 
-      # 1️⃣4️⃣ Deploy Docker container to EC2
+      # 1️⃣4️⃣ Deploy to EC2 (run container)
       - name: Deploy Docker container to EC2
         run: |
           SSH_KEY=private_key.pem
@@ -110,7 +109,6 @@ jobs:
             sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:${DOCKER_IMAGE_TAG}
           EOF
 
-      # 1️⃣5️⃣ Show live URL
+      # 1️⃣5️⃣ Output live app URL
       - name: Show live URL
-        run: |
-          echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
+        run: echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:8090"
