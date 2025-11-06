@@ -6,21 +6,21 @@ on:
 
 env:
   AWS_REGION: eu-north-1
-  ECR_REPO_NAME: my-simple-app       # ECR repo name
-  TF_DIR: terraform                  # Terraform directory path
+  ECR_REPO_NAME: my-simple-app
+  TF_DIR: terraform
   DOCKER_IMAGE_TAG: latest
   KEY_PAIR_NAME: deployer-key
-  CONTAINER_NAME: my-simple-app      # Docker container name
-  HOST_PORT: 8090                    # Exposed EC2 port
-  APP_PORT: 80                       # Port inside container
+  CONTAINER_NAME: my-simple-app
+  HOST_PORT: 8090
+  APP_PORT: 80
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 0️⃣ Checkout repository
-      - name: Checkout code
+      # 0️⃣ Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       # 1️⃣ Configure AWS credentials
@@ -35,12 +35,12 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      # 2a️⃣ Terraform Init
+      # 3️⃣ Terraform Init
       - name: Terraform Init
         working-directory: ${{ env.TF_DIR }}
         run: terraform init
 
-      # 2b️⃣ Terraform Apply
+      # 4️⃣ Terraform Apply (auto approve)
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
         run: |
@@ -51,47 +51,42 @@ jobs:
             -var "key_pair_name=${{ env.KEY_PAIR_NAME }}" \
             -var "instance_type=t3.micro"
 
-      # 3️⃣ Extract Terraform outputs (safe + debug)
+      # 5️⃣ Extract Terraform outputs safely
       - name: Extract Terraform outputs
         id: tf_output
         working-directory: ${{ env.TF_DIR }}
         run: |
           echo "Fetching Terraform outputs..."
           terraform output -json > tf_output.json
-          cat tf_output.json
 
-          EC2_PUBLIC_IP=$(jq -r '.ec2_public_ip.value // empty' tf_output.json)
-          ECR_URI=$(jq -r '.ecr_repository_uri.value // empty' tf_output.json)
-          ECR_REGISTRY=$(echo "$ECR_URI" | cut -d'/' -f1)
-
-          if [ -z "$EC2_PUBLIC_IP" ] || [ -z "$ECR_URI" ]; then
-            echo "❌ Missing Terraform outputs."
+          if ! jq empty tf_output.json 2>/dev/null; then
+            echo "❌ Invalid JSON from terraform output"
+            cat tf_output.json
             exit 1
           fi
 
-          echo "✅ EC2_PUBLIC_IP=$EC2_PUBLIC_IP"
-          echo "✅ ECR_URI=$ECR_URI"
-          echo "✅ ECR_REGISTRY=$ECR_REGISTRY"
+          echo "✅ Terraform outputs parsed successfully"
+          cat tf_output.json
 
-          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
-          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
-          echo "ECR_REGISTRY=$ECR_REGISTRY" >> $GITHUB_ENV
+          echo "EC2_PUBLIC_IP=$(jq -r .ec2_public_ip.value tf_output.json)" >> $GITHUB_ENV
+          echo "ECR_URI=$(jq -r .ecr_repository_uri.value tf_output.json)" >> $GITHUB_ENV
+          echo "ECR_REGISTRY=$(jq -r .ecr_repository_uri.value tf_output.json | cut -d'/' -f1)" >> $GITHUB_ENV
 
-      # 4️⃣ Debug Environment (optional but useful)
-      - name: Debug Terraform Outputs
+      # 6️⃣ Debug outputs
+      - name: Debug Terraform outputs
         run: |
-          echo "EC2_PUBLIC_IP=${EC2_PUBLIC_IP}"
-          echo "ECR_URI=${ECR_URI}"
-          echo "ECR_REGISTRY=${ECR_REGISTRY}"
+          echo "EC2_PUBLIC_IP: $EC2_PUBLIC_IP"
+          echo "ECR_URI: $ECR_URI"
+          echo "ECR_REGISTRY: $ECR_REGISTRY"
 
-      # 5️⃣ Save EC2 private key
+      # 7️⃣ Save EC2 private key
       - name: Save EC2 private key
         run: |
           echo "${{ secrets.EC2_PRIVATE_KEY }}" > private_key.pem
           chmod 600 private_key.pem
 
-      # 6️⃣ Wait for EC2 SSH to be ready
-      - name: Wait for EC2
+      # 8️⃣ Wait for EC2 to be ready for SSH
+      - name: Wait for EC2 to be ready
         run: |
           EC2_IP=${EC2_PUBLIC_IP}
           SSH_KEY=private_key.pem
@@ -102,32 +97,35 @@ jobs:
             sleep 10
           done
 
-      # 7️⃣ Log in to Amazon ECR
+      # 9️⃣ Log in to Amazon ECR
       - name: Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 8️⃣ Build Docker image
+      # 🔟 Build Docker image
       - name: Build Docker image
         run: |
           docker build --no-cache -t ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} .
 
-      # 9️⃣ Tag Docker image for ECR
+      # 1️⃣1️⃣ Tag Docker image for ECR
       - name: Tag Docker image
         run: |
           docker tag ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} \
           ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
 
-      # 🔟 Push Docker image to ECR
+      # 1️⃣2️⃣ Push Docker image to ECR
       - name: Push Docker image
         run: |
           docker push ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
 
-      # 1️⃣1️⃣ Deploy Docker container to EC2
+      # 1️⃣3️⃣ Deploy container to EC2
       - name: Deploy Docker container to EC2
         run: |
           SSH_KEY=private_key.pem
-          ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@"${EC2_PUBLIC_IP}" <<EOF
+          ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@$EC2_PUBLIC_IP <<EOF
+            set -e
+            echo "Deploying to EC2 instance..."
+
             # Install Docker if missing
             if ! command -v docker &> /dev/null; then
               sudo dnf update -y
@@ -135,18 +133,24 @@ jobs:
               sudo systemctl start docker
               sudo systemctl enable docker
             fi
-            # Log in to ECR
-            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
-            # Remove old container & image
-            sudo docker stop ${{ env.CONTAINER_NAME }} || true
-            sudo docker rm ${{ env.CONTAINER_NAME }} || true
-            sudo docker image rm ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }} || true
-            # Pull new image & run container
-            sudo docker pull ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
-            sudo docker run -d --name ${{ env.CONTAINER_NAME }} -p ${{ env.HOST_PORT }}:${{ env.APP_PORT }} ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
+
+            # Authenticate Docker with ECR
+            aws ecr get-login-password --region $AWS_REGION | \
+              sudo docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            # Stop old container if exists
+            sudo docker stop $CONTAINER_NAME || true
+            sudo docker rm $CONTAINER_NAME || true
+            sudo docker image rm $ECR_URI:$DOCKER_IMAGE_TAG || true
+
+            # Pull new image & run
+            sudo docker pull $ECR_URI:$DOCKER_IMAGE_TAG
+            sudo docker run -d --name $CONTAINER_NAME -p $HOST_PORT:$APP_PORT $ECR_URI:$DOCKER_IMAGE_TAG
+
+            echo "✅ Deployment complete on EC2"
           EOF
 
-      # 1️⃣2️⃣ Show live app URL
-      - name: Show live URL
+      # 1️⃣4️⃣ Display Live App URL
+      - name: Show live app URL
         run: |
-          echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:${HOST_PORT}"
+          echo "✅ App is live at: http://${EC2_PUBLIC_IP}:${HOST_PORT}"
