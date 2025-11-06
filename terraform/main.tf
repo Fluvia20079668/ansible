@@ -15,28 +15,6 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
-
-# -------------------------
-# Variables
-# -------------------------
-variable "aws_region" {
-  type    = string
-  default = "eu-north-1"
-}
-
-variable "key_pair_name" {
-  type = string
-}
-
-variable "ecr_repo_name" {
-  type = string
-}
-
-variable "instance_type" {
-  type    = string
-  default = "t3.micro"
-}
-
 # -------------------------
 # ECR Repository (create if not exists)
 # -------------------------
