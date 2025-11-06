@@ -30,7 +30,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Install jq (needed for parsing Terraform outputs)
+      # Install jq for parsing Terraform outputs
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
@@ -50,7 +50,7 @@ jobs:
         working-directory: ${{ env.TF_DIR }}
         run: terraform apply -auto-approve
 
-      # Capture Terraform outputs
+      # Extract Terraform outputs
       - name: Extract Terraform outputs
         id: tf_output
         working-directory: ${{ env.TF_DIR }}
@@ -60,13 +60,13 @@ jobs:
           echo "ECR_URI=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value)" >> $GITHUB_ENV
           echo "PRIVATE_KEY=$(echo "$TF_OUTPUT" | jq -r .private_key_pem.value)" >> $GITHUB_ENV
 
-      # Save SSH key
+      # Save private key
       - name: Save private key
         run: |
           echo "$PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-      # Wait for EC2 to become ready
+      # Wait for EC2 to be ready
       - name: Wait for EC2
         run: sleep 30
 
