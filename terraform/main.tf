@@ -1,149 +1,158 @@
-############################################
-# PROVIDER & TERRAFORM CONFIG
-############################################
-
 terraform {
+  required_version = ">= 1.5.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
-  required_version = ">= 1.5.0"
+
+  backend "local" {} # You can switch to S3 backend if needed
 }
 
 provider "aws" {
   region = var.aws_region
 }
 
-############################################
-# DATA SOURCES
-############################################
-
-data "aws_vpc" "selected" {
-  id = "vpc-07f0ec8836bb93715"
-}
-
-data "aws_subnet" "selected" {
-  id = "subnet-022d77f082de78109"
-}
-
-data "aws_ecr_repository" "app" {
-  name = var.ecr_name
-}
-
-############################################
-# RANDOM IDS FOR UNIQUE RESOURCE NAMES
-############################################
-
-resource "random_id" "sg_suffix" {
-  byte_length = 2
-}
-
-resource "random_id" "key_suffix" {
-  byte_length = 2
-}
-
-############################################
+##############################
 # SECURITY GROUP
-############################################
-
+##############################
 resource "aws_security_group" "web_sg" {
-  name        = "web-server-sg-${random_id.sg_suffix.hex}"
+  name        = "web-server-sg"
   description = "Allow SSH and App traffic"
   vpc_id      = data.aws_vpc.selected.id
 
-  ingress {
-    description = "Allow SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  ingress = [
+    {
+      description      = "Allow App Port"
+      from_port        = 8090
+      to_port          = 8090
+      protocol         = "tcp"
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    },
+    {
+      description      = "Allow SSH"
+      from_port        = 22
+      to_port          = 22
+      protocol         = "tcp"
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    }
+  ]
 
-  ingress {
-    description = "Allow App Port"
-    from_port   = 8090
-    to_port     = 8090
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  egress = [
+    {
+      description      = ""
+      from_port        = 0
+      to_port          = 0
+      protocol         = "-1"
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    }
+  ]
 
   tags = {
-    Name = "web-sg-${random_id.sg_suffix.hex}"
+    Name = "web-sg"
   }
 }
 
-############################################
-# SSH KEY PAIR
-############################################
+##############################
+# FETCH DEFAULT VPC & SUBNET
+##############################
+data "aws_vpc" "selected" {
+  default = true
+}
 
+data "aws_subnet" "selected" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.selected.id]
+  }
+
+  availability_zone = "${var.aws_region}a"
+}
+
+##############################
+# KEY PAIR GENERATION
+##############################
 resource "tls_private_key" "deployer" {
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key-${random_id.key_suffix.hex}"
+  key_name   = "deployer-key"
   public_key = tls_private_key.deployer.public_key_openssh
 }
 
-############################################
+##############################
 # EC2 INSTANCE
-############################################
-
-resource "aws_instance" "web_server" {
+##############################
+resource "aws_instance" "app_server" {
   ami                         = var.ami_id
-  instance_type               = "t3.micro"
+  instance_type               = var.instance_type
   key_name                    = aws_key_pair.deployer.key_name
-  vpc_security_group_ids      = [aws_security_group.web_sg.id]
   subnet_id                   = data.aws_subnet.selected.id
+  vpc_security_group_ids      = [aws_security_group.web_sg.id]
   associate_public_ip_address = true
 
+  tags = {
+    Name = "terraform-web"
+  }
+
+  # Optional: simple user_data for testing webserver
   user_data = <<-EOF
               #!/bin/bash
-              dnf update -y
-              dnf install -y docker awscli
-              systemctl enable docker
-              systemctl start docker
-
-              # Log in to ECR
-              aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${data.aws_ecr_repository.app.repository_url}
-
-              # Pull and run app container
-              docker pull ${data.aws_ecr_repository.app.repository_url}:latest
-              docker run -d -p 8090:8090 --restart always ${data.aws_ecr_repository.app.repository_url}:latest
+              sudo yum update -y
+              sudo yum install -y docker
+              sudo service docker start
+              docker run -d -p 8090:80 nginx
               EOF
+}
 
-  tags = {
-    Name = "docker-web-server"
+##############################
+# ECR REPOSITORY
+##############################
+resource "aws_ecr_repository" "app" {
+  name                 = var.ecr_repo_name
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
   }
 }
 
-############################################
+##############################
 # OUTPUTS
-############################################
+##############################
 
 output "ec2_public_ip" {
-  value = aws_instance.web_server.public_ip
-}
-
-output "app_url" {
-  value = "http://${aws_instance.web_server.public_ip}:8090"
+  description = "Public IP of the EC2 instance"
+  value       = aws_instance.app_server.public_ip
 }
 
 output "ecr_repository_uri" {
-  value = data.aws_ecr_repository.app.repository_url
+  description = "ECR repository URI"
+  value       = aws_ecr_repository.app.repository_url
 }
 
 output "private_key_pem" {
-  value     = tls_private_key.deployer.private_key_pem
-  sensitive = true
+  description = "Private key for connecting to EC2"
+  value       = tls_private_key.deployer.private_key_pem
+  sensitive   = true
 }
