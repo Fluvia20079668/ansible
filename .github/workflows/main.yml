@@ -54,10 +54,10 @@ jobs:
       # Step 6️⃣: Prepare SSH key
       - name: 🔑 Setup SSH Key
         run: |
-          mkdir -p $HOME/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > $HOME/.ssh/id_rsa
-          chmod 600 $HOME/.ssh/id_rsa
-          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> $HOME/.ssh/known_hosts
+          mkdir -p /github/home/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /github/home/.ssh/id_rsa
+          chmod 600 /github/home/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> /github/home/.ssh/known_hosts
           echo "✅ SSH key setup complete"
 
       # Step 7️⃣: Test SSH connectivity and show exact errors
@@ -67,7 +67,7 @@ jobs:
           echo "Testing SSH connection..."
           echo "SSH User: ${{ secrets.SSH_USER }}"
           echo "SSH Host: ${{ secrets.SSH_HOST }}"
-          ssh -i $HOME/.ssh/id_rsa -o StrictHostKeyChecking=no "${{ secrets.SSH_USER }}"@"${{ secrets.SSH_HOST }}" \
+          ssh -i /github/home/.ssh/id_rsa -o StrictHostKeyChecking=no "${{ secrets.SSH_USER }}"@"${{ secrets.SSH_HOST }}" \
           "echo ✅ SSH connection successful" || \
           (echo "❌ SSH connection failed. Check your SSH_USER, SSH_HOST, and SSH_PRIVATE_KEY secrets." && exit 1)
 
@@ -77,7 +77,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key_path: $HOME/.ssh/id_rsa
+          key_path: /github/home/.ssh/id_rsa
           port: 22
           script_stop: true
           timeout: 90s
