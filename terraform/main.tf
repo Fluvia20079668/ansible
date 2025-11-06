@@ -1,89 +1,97 @@
 terraform {
-  required_version = ">= 1.5.0"
+  required_version = ">= 1.9.8"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
+# -------------------------
+# Provider Configuration
+# -------------------------
 provider "aws" {
   region = var.aws_region
 }
 
-# -----------------------------
-# VPC and Networking
-# -----------------------------
+# -------------------------
+# ECR Repository (create if missing)
+# -------------------------
+data "aws_ecr_repository" "existing" {
+  name = var.ecr_repo_name
+}
 
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_support   = true
-  enable_dns_hostnames = true
+resource "aws_ecr_repository" "app_repo" {
+  count = try(data.aws_ecr_repository.existing.id, "") == "" ? 1 : 0
+  name  = var.ecr_repo_name
 
   tags = {
-    Name = "${var.project_name}-vpc"
+    Name = "${var.project_name}-ecr"
   }
 }
 
-resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = data.aws_availability_zones.available.names[0]
+# -------------------------
+# EC2 Key Pair (create if missing)
+# -------------------------
+data "aws_key_pair" "existing" {
+  count    = 1
+  key_name = var.key_pair_name
+}
 
-  tags = {
-    Name = "${var.project_name}-public-subnet"
+resource "tls_private_key" "ec2_key" {
+  count     = length(data.aws_key_pair.existing) == 0 ? 1 : 0
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "deployer" {
+  count      = length(data.aws_key_pair.existing) == 0 ? 1 : 0
+  key_name   = var.key_pair_name
+  public_key = tls_private_key.ec2_key[0].public_key_openssh
+}
+
+# -------------------------
+# Security Group (reuse if exists)
+# -------------------------
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_security_group" "existing_sg" {
+  filter {
+    name   = "group-name"
+    values = ["app-sg"]
+  }
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
   }
 }
 
-data "aws_availability_zones" "available" {}
-
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
-
-  tags = {
-    Name = "${var.project_name}-igw"
-  }
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
-  }
-
-  tags = {
-    Name = "${var.project_name}-public-rt"
-  }
-}
-
-resource "aws_route_table_association" "public_assoc" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
-}
-
-# -----------------------------
-# Security Group
-# -----------------------------
-
-resource "aws_security_group" "default" {
-  vpc_id = aws_vpc.main.id
-  name   = "${var.project_name}-sg"
+resource "aws_security_group" "app_sg" {
+  count       = try(data.aws_security_group.existing_sg.id, "") == "" ? 1 : 0
+  name        = "app-sg"
+  description = "Allow SSH and application traffic"
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    from_port   = 80
-    to_port     = 80
+    description = "Allow SSH"
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    from_port   = 22
-    to_port     = 22
+    description = "App Port (8090)"
+    from_port   = 8090
+    to_port     = 8090
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -100,19 +108,57 @@ resource "aws_security_group" "default" {
   }
 }
 
-# -----------------------------
-# ECR Repository
-# -----------------------------
-
-resource "aws_ecr_repository" "app_repo" {
-  name                 = var.ecr_repo_name
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
+# -------------------------
+# Subnet & AMI
+# -------------------------
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
   }
+}
+
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
+
+# -------------------------
+# EC2 Instance
+# -------------------------
+resource "aws_instance" "app_server" {
+  ami                         = data.aws_ami.amazon_linux.id
+  instance_type               = var.instance_type
+  subnet_id                   = element(data.aws_subnets.default.ids, 0)
+  associate_public_ip_address = true
+  key_name                    = length(aws_key_pair.deployer) > 0 ? aws_key_pair.deployer[0].key_name : var.key_pair_name
+  vpc_security_group_ids      = [length(aws_security_group.app_sg) > 0 ? aws_security_group.app_sg[0].id : data.aws_security_group.existing_sg.id]
 
   tags = {
-    Name = "${var.project_name}-ecr"
+    Name = "${var.project_name}-ec2"
   }
+}
+
+# -------------------------
+# Outputs
+# -------------------------
+output "ec2_public_ip" {
+  value = aws_instance.app_server.public_ip
+}
+
+output "ecr_repository_uri" {
+  value = try(
+    aws_ecr_repository.app_repo[0].repository_url,
+    data.aws_ecr_repository.existing.repository_url
+  )
+}
+
+output "private_key_pem" {
+  value     = length(aws_key_pair.deployer) > 0 ? tls_private_key.ec2_key[0].private_key_pem : "Using existing key pair"
+  sensitive = true
 }
