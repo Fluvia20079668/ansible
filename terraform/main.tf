@@ -15,51 +15,59 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
+
 # -------------------------
-# ECR Repository (create if not exists)
+# ECR Repository
 # -------------------------
 data "aws_ecr_repository" "existing" {
-  name = var.ecr_repo_name
+  for_each = try({for r in [var.ecr_repo_name]: r => r}, {})
+  name     = each.key
 }
 
 resource "aws_ecr_repository" "app_repo" {
-  count = data.aws_ecr_repository.existing ? 0 : 1
+  count = length(data.aws_ecr_repository.existing) == 0 ? 1 : 0
   name  = var.ecr_repo_name
 }
 
 # -------------------------
-# EC2 Key Pair (create if not exists)
+# EC2 Key Pair
 # -------------------------
 data "aws_key_pair" "existing" {
+  count    = 1
   key_name = var.key_pair_name
 }
 
-resource "tls_private_key" "new_key" {
-  count     = data.aws_key_pair.existing ? 0 : 1
+resource "tls_private_key" "ec2_key" {
+  count     = length(data.aws_key_pair.existing) == 0 ? 1 : 0
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "aws_key_pair" "deployer" {
-  count      = data.aws_key_pair.existing ? 0 : 1
+  count      = length(data.aws_key_pair.existing) == 0 ? 1 : 0
   key_name   = var.key_pair_name
-  public_key = tls_private_key.new_key[0].public_key_openssh
+  public_key = tls_private_key.ec2_key[0].public_key_openssh
 }
 
 # -------------------------
-# Security Group (create if not exists)
+# Security Group
 # -------------------------
-data "aws_security_group" "existing" {
+data "aws_security_group" "existing_sg" {
   filter {
     name   = "group-name"
     values = ["app-sg"]
   }
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
 }
 
 resource "aws_security_group" "app_sg" {
-  count       = count = try(data.aws_security_group.existing.id, "") == "" ? 1 : 0
+  count       = try(data.aws_security_group.existing_sg.id, "") == "" ? 1 : 0
   name        = "app-sg"
-  description = "Allow SSH and HTTP traffic"
+  description = "Allow SSH and app traffic"
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
     from_port   = 22
@@ -84,7 +92,21 @@ resource "aws_security_group" "app_sg" {
 }
 
 # -------------------------
-# Latest Amazon Linux 2 AMI
+# Default VPC & Subnet
+# -------------------------
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+# -------------------------
+# EC2 Instance
 # -------------------------
 data "aws_ami" "amazon_linux" {
   most_recent = true
@@ -96,18 +118,16 @@ data "aws_ami" "amazon_linux" {
   }
 }
 
-# -------------------------
-# EC2 Instance
-# -------------------------
 resource "aws_instance" "app_server" {
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
-  key_name = try(data.aws_key_pair.existing.key_name, aws_key_pair.deployer[0].key_name)
-  vpc_security_group_ids = length(data.aws_security_group.existing.ids) > 0 ? data.aws_security_group.existing.ids : [aws_security_group.app_sg[0].id]
+  subnet_id              = element(data.aws_subnets.default.ids, 0)
+  key_name               = length(aws_key_pair.deployer) > 0 ? aws_key_pair.deployer[0].key_name : var.key_pair_name
+  vpc_security_group_ids = [length(aws_security_group.app_sg) > 0 ? aws_security_group.app_sg[0].id : data.aws_security_group.existing_sg.id]
   associate_public_ip_address = true
 
   tags = {
-    Name = "MyAppServer"
+    Name = "my-simple-app-server"
   }
 }
 
@@ -119,10 +139,10 @@ output "ec2_public_ip" {
 }
 
 output "private_key_pem" {
-  value     = length(tls_private_key.new_key) > 0 ? tls_private_key.new_key[0].private_key_pem : "Use existing key pair"
+  value     = length(aws_key_pair.deployer) > 0 ? tls_private_key.ec2_key[0].private_key_pem : "Use existing key pair"
   sensitive = true
 }
 
 output "ecr_repository_uri" {
-  value = length(aws_ecr_repository.app_repo) > 0 ? aws_ecr_repository.app_repo[0].repository_url : data.aws_ecr_repository.existing.repository_url
+  value = length(aws_ecr_repository.app_repo) > 0 ? aws_ecr_repository.app_repo[0].repository_url : var.ecr_repo_name
 }
