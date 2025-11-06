@@ -40,16 +40,16 @@ jobs:
         working-directory: ${{ env.TF_DIR }}
         run: terraform init
 
-      # 2b️⃣ Terraform Apply
+      # 2b️⃣ Terraform Apply (✅ fixed — removed use_existing_key)
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
         run: |
           terraform apply -auto-approve \
+            -var "project_name=my-simple-app" \
             -var "aws_region=${{ env.AWS_REGION }}" \
             -var "ecr_repo_name=${{ env.ECR_REPO_NAME }}" \
             -var "key_pair_name=${{ env.KEY_PAIR_NAME }}" \
-            -var "instance_type=t3.micro" \
-            -var "use_existing_key=true"
+            -var "instance_type=t3.micro"
 
       # 3️⃣ Extract Terraform outputs
       - name: Extract Terraform outputs
@@ -61,7 +61,7 @@ jobs:
           echo "ECR_URI=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value)" >> $GITHUB_ENV
           echo "ECR_REGISTRY=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value | cut -d'/' -f1)" >> $GITHUB_ENV
 
-      # 4️⃣ Save EC2 private key
+      # 4️⃣ Save EC2 private key (from GitHub secret)
       - name: Save EC2 private key
         run: |
           echo "${{ secrets.EC2_PRIVATE_KEY }}" > private_key.pem
@@ -129,4 +129,4 @@ jobs:
       # 1️⃣1️⃣ Show live app URL
       - name: Show live URL
         run: |
-            echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:${HOST_PORT}" 
+          echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:${HOST_PORT}"
