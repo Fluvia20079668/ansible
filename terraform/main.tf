@@ -15,6 +15,7 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
+
 # 🔹 Create ECR repository
 resource "aws_ecr_repository" "app_repo" {
   name = var.ecr_repo_name
@@ -68,6 +69,9 @@ resource "aws_instance" "app_server" {
   tags = {
     Name = "MyAppServer"
   }
+}
+
+# 🔹 Outputs (must be at root level)
 output "ec2_public_ip" {
   description = "Public IP of EC2"
   value       = aws_instance.app_server.public_ip
@@ -82,6 +86,4 @@ output "private_key_pem" {
   description = "Private key for SSH access"
   value       = tls_private_key.ec2_key.private_key_pem
   sensitive   = true
-}
-
 }
