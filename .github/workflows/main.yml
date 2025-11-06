@@ -52,10 +52,12 @@ jobs:
         working-directory: terraform
         id: tf_outputs
         run: |
-          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip | tr -d '[:space:]')
-          ECR_URI=$(terraform output -raw ecr_repository_uri | tr -d '[:space:]')
+          # Extract outputs using JSON to avoid debug metadata
+          EC2_PUBLIC_IP=$(terraform output -json ec2_public_ip | jq -r '.')
+          ECR_URI=$(terraform output -json ecr_repository_uri | jq -r '.')
           PRIVATE_KEY_PEM=$(terraform output -raw private_key_pem)
 
+          # Validate outputs
           if [ -z "$EC2_PUBLIC_IP" ] || [ -z "$ECR_URI" ]; then
             echo "❌ Terraform outputs missing!"
             exit 1
@@ -64,6 +66,8 @@ jobs:
           # Save variables to GitHub environment
           echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+
+          # Save private key for SSH
           echo "$PRIVATE_KEY_PEM" > deploy_key.pem
           chmod 600 deploy_key.pem
 
