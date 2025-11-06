@@ -1,4 +1,4 @@
-name: 🚀 Terraform + Docker CI/CD to EC2
+name: 🚀 Terraform + Docker CI/CD
 
 on:
   push:
@@ -17,17 +17,13 @@ jobs:
       AWS_REGION: eu-north-1
       ECR_REPO_NAME: my-simple-app
       IMAGE_TAG: latest
-      APP_PORT: 8090
 
     steps:
+      # 1️⃣ Checkout repo
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.7
-
+      # 2️⃣ Configure AWS credentials
       - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -35,52 +31,70 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🏗️ Terraform Init
+      # 3️⃣ Install Terraform
+      - name: 🛠️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      # 4️⃣ Initialize Terraform
+      - name: ⛏️ Terraform Init
         working-directory: terraform
         run: terraform init
 
-      - name: 🌱 Terraform Apply
+      # 5️⃣ Apply Terraform (auto-approve)
+      - name: 🌍 Terraform Apply
         working-directory: terraform
-        id: tf
         run: terraform apply -auto-approve
 
-      - name: 🌐 Get EC2 Public IP and Private Key
-        id: ec2
+      # 6️⃣ Extract Terraform outputs safely
+      - name: 📡 Get Terraform outputs
         working-directory: terraform
+        id: tf_outputs
         run: |
-          echo "EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
-          echo "PRIVATE_KEY_PEM=$(terraform output -raw private_key_pem)" >> $GITHUB_ENV
+          # Save public IP and ECR URI
+          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip | tr -d '"')
+          ECR_URI=$(terraform output -raw ecr_repository_uri | tr -d '"')
+          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
+          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
-      - name: 🐳 Log in to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+          # Encode private key in base64 to handle multi-line safely
+          PRIVATE_KEY_B64=$(terraform output -raw private_key_pem | base64)
+          echo "PRIVATE_KEY_B64=$PRIVATE_KEY_B64" >> $GITHUB_ENV
 
-      - name: 🧱 Build, Tag, and Push Docker Image
+      # 7️⃣ Decode private key and save to file
+      - name: 🔐 Save SSH Key
         run: |
-          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}
+          echo "$PRIVATE_KEY_B64" | base64 --decode > deploy_key.pem
+          chmod 600 deploy_key.pem
+
+      # 8️⃣ Log in to ECR
+      - name: 🐳 Docker Login to ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_URI
+
+      # 9️⃣ Build, tag, and push Docker image
+      - name: 🧱 Build and Push Docker Image
+        run: |
+          IMAGE_URI=$ECR_URI:$IMAGE_TAG
+          echo "Building image $IMAGE_URI"
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
+      # 🔟 SSH into EC2 and deploy Docker container
       - name: 🚀 Deploy Docker on EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ env.EC2_PUBLIC_IP }}
-          username: ec2-user
-          key: ${{ env.PRIVATE_KEY_PEM }}
-          port: 22
-          script_stop: true
-          command_timeout: 30m
-          script: |
-            sudo dnf install -y docker awscli
+        run: |
+          ssh -o StrictHostKeyChecking=no -i deploy_key.pem ec2-user@$EC2_PUBLIC_IP << EOF
+            sudo yum install -y docker awscli
             sudo systemctl enable docker
             sudo systemctl start docker
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-            docker stop my-simple-app || true
-            docker rm my-simple-app || true
-            docker pull ${{ env.IMAGE_URI }}
-            docker run -d -p ${{ env.APP_PORT }}:${{ env.APP_PORT }} --name my-simple-app --restart always ${{ env.IMAGE_URI }}
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin $ECR_URI
+            sudo docker stop my-app || true
+            sudo docker rm my-app || true
+            sudo docker run -d -p 8090:8090 --name my-app --restart always $IMAGE_URI
+          EOF
 
-      - name: 🌍 Show live app URL
-        run: |
-          echo "🎉 Your app is live at: http://${{ env.EC2_PUBLIC_IP }}:${{ env.APP_PORT }}"
+      # 1️⃣1️⃣ Output live app URL
+      - name: 🌐 App URL
+        run: echo "Your app is live at http://$EC2_PUBLIC_IP:8090"
