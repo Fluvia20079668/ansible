@@ -1,8 +1,7 @@
 ---
-- name: Deploy my-simple-app using shell Docker commands
+- name: Deploy my-simple-app (Docker already installed)
   hosts: ec2
-  become: yes
-  gather_facts: no    # <<< DISABLE FACT GATHERING
+  gather_facts: no   # Disable fact gathering
   vars:
     ecr_repo: "{{ ecr_repo }}"
     image_tag: "latest"
@@ -12,22 +11,6 @@
     container_port: 8090
 
   tasks:
-    - name: Ensure Docker is installed
-      ansible.builtin.yum:
-        name: docker
-        state: present
-
-    - name: Start Docker service
-      ansible.builtin.service:
-        name: docker
-        state: started
-        enabled: yes
-
-    - name: Login to ECR
-      ansible.builtin.shell: |
-        aws ecr get-login-password --region eu-north-1 | \
-        docker login --username AWS --password-stdin {{ ecr_repo | regex_replace('/.*','') }}
-
     - name: Cleanup old container
       ansible.builtin.shell: |
         docker rm -f {{ container_name }} || true
