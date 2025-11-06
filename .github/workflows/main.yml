@@ -96,4 +96,5 @@ jobs:
           EOF
 
       - name: Show live URL
-        run: echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
+        run: |
+  echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
