@@ -60,7 +60,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/network.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "echo '✅ Connected to EC2 successfully.'"
 
-      # 7️⃣ Deploy Docker container on EC2 with cleanup
+      # 7️⃣ Deploy Docker container on EC2 with robust cleanup
       - name: Deploy on EC2
         env:
           COMMIT_SHA: ${{ github.sha }}
@@ -69,9 +69,22 @@ jobs:
             set -e
 
             echo "🧹 Cleaning up old containers..."
-            docker stop my-simple-app || true
-            docker rm my-simple-app || true
+
+            # Force remove container named my-simple-app if exists
+            docker rm -f my-simple-app || true
+
+            # Stop and remove any container using port 80
+            CONTAINER=$(docker ps -q --filter "publish=80")
+            if [ -n "$CONTAINER" ]; then
+              echo "🧹 Stopping container(s) using port 80..."
+              docker stop $CONTAINER
+              docker rm $CONTAINER
+            fi
+
+            # Remove exited containers older than 24h
             docker container prune -f --filter "until=24h"
+
+            # Remove dangling images
             docker image prune -f
 
             echo "📦 Pulling latest and commit-specific images..."
