@@ -1,35 +1,66 @@
 ---
-- name: Deploy my-simple-app (Docker already installed)
-  hosts: all
+- name: Deploy my-simple-app from AWS ECR
+  hosts: web
   become: yes
   vars:
-    app_name: my-simple-app
-    app_image: 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
-    app_ports:
-      - "80:80"
+    ecr_region: eu-north-1
+    ecr_repo: 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app
+    container_name: my-simple-app
+    container_port: 80
 
   tasks:
+    - name: Install required packages
+      ansible.builtin.yum:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+        state: present
 
-    - name: Ensure Docker service is running
-      ansible.builtin.systemd:
+    - name: Enable Docker repository
+      ansible.builtin.command: amazon-linux-extras enable docker
+      args:
+        creates: /etc/yum.repos.d/docker.repo
+
+    - name: Install Docker
+      ansible.builtin.yum:
+        name: docker
+        state: present
+
+    - name: Start Docker service
+      ansible.builtin.service:
         name: docker
         state: started
         enabled: yes
 
-    - name: Pull the latest image
+    - name: Install Python Docker module
+      ansible.builtin.pip:
+        name: docker
+        state: present
+
+    - name: Login to AWS ECR
+      ansible.builtin.shell: |
+        aws ecr get-login-password --region {{ ecr_region }} | docker login --username AWS --password-stdin {{ ecr_repo }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+        AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+        AWS_DEFAULT_REGION: "{{ ecr_region }}"
+
+    - name: Pull my-simple-app image from ECR
       community.docker.docker_image:
-        name: "{{ app_image }}"
+        name: "{{ ecr_repo }}:latest"
         source: pull
 
     - name: Remove old container if exists
       community.docker.docker_container:
-        name: "{{ app_name }}"
+        name: "{{ container_name }}"
         state: absent
 
-    - name: Start new container
+    - name: Run my-simple-app container
       community.docker.docker_container:
-        name: "{{ app_name }}"
-        image: "{{ app_image }}"
+        name: "{{ container_name }}"
+        image: "{{ ecr_repo }}:latest"
         state: started
         restart_policy: always
-        published_ports: "{{ app_ports }}"
+        published_ports:
+          - "{{ container_port }}:80"
