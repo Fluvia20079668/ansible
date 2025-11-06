@@ -21,16 +21,6 @@ provider "aws" {
 # DATA SOURCES
 ############################################
 
-# Use existing VPC and Subnet
-data "aws_vpc" "selected" {
-  id = "vpc-0446a38eda4d36f89"
-}
-
-data "aws_subnet" "selected" {
-  id = "subnet-05d546bc66c5207ac"
-}
-
-# Reference existing ECR repository
 data "aws_ecr_repository" "app" {
   name = var.ecr_name
 }
@@ -41,8 +31,8 @@ data "aws_ecr_repository" "app" {
 
 resource "aws_security_group" "web_sg" {
   name        = "web-server-sg"
-  description = "Allow SSH and HTTP/App traffic"
-  vpc_id      = data.aws_vpc.selected.id
+  description = "Allow SSH and App traffic"
+  vpc_id      = var.vpc_id
 
   ingress {
     description = "Allow SSH"
@@ -86,11 +76,11 @@ resource "aws_key_pair" "deployer" {
 ############################################
 
 resource "aws_instance" "web_server" {
-  ami                    = var.ami_id
-  instance_type          = "t3.micro"
-  key_name               = aws_key_pair.deployer.key_name
-  vpc_security_group_ids = [aws_security_group.web_sg.id]
-  subnet_id              = data.aws_subnet.selected.id
+  ami                         = var.ami_id
+  instance_type               = var.instance_type
+  key_name                    = aws_key_pair.deployer.key_name
+  subnet_id                   = var.subnet_id
+  vpc_security_group_ids      = [aws_security_group.web_sg.id]
   associate_public_ip_address = true
 
   user_data = <<-EOF
@@ -105,7 +95,7 @@ resource "aws_instance" "web_server" {
 
               # Pull and run app container
               docker pull ${data.aws_ecr_repository.app.repository_url}:latest
-              docker run -d -p 8090:8090 --restart always ${data.aws_ecr_repository.app.repository_url}:latest
+              docker run -d -p 8090:8090 --restart always --name my-simple-app ${data.aws_ecr_repository.app.repository_url}:latest
               EOF
 
   tags = {
@@ -123,4 +113,8 @@ output "ec2_public_ip" {
 
 output "app_url" {
   value = "http://${aws_instance.web_server.public_ip}:8090"
+}
+
+output "ecr_repository_uri" {
+  value = data.aws_ecr_repository.app.repository_url
 }

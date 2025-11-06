@@ -5,7 +5,7 @@
 variable "aws_region" {
   description = "AWS region for deployment"
   type        = string
-  default     = "us-east-1"
+  default     = "eu-north-1"
 }
 
 ############################################
@@ -13,9 +13,27 @@ variable "aws_region" {
 ############################################
 
 variable "ami_id" {
-  description = "Amazon Linux 2023 AMI for us-east-1"
+  description = "Amazon Linux 2023 AMI"
   type        = string
-  default     = "ami-0bdd88bd06d16ba03"
+  default     = "ami-07fb0a5bf9ae299a4"
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "subnet_id" {
+  description = "Subnet ID for the EC2 instance"
+  type        = string
+  default     = "subnet-022d77f082de78109"
+}
+
+variable "vpc_id" {
+  description = "VPC ID for the EC2 instance"
+  type        = string
+  default     = "vpc-07f0ec8836bb93715"
 }
 
 variable "ecr_name" {
