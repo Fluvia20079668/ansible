@@ -57,7 +57,7 @@ data "aws_security_group" "existing" {
 }
 
 resource "aws_security_group" "app_sg" {
-  count       = length(data.aws_security_group.existing.ids) == 0 ? 1 : 0
+  count       = count = try(data.aws_security_group.existing.id, "") == "" ? 1 : 0
   name        = "app-sg"
   description = "Allow SSH and HTTP traffic"
 
@@ -102,7 +102,7 @@ data "aws_ami" "amazon_linux" {
 resource "aws_instance" "app_server" {
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
-  key_name               = data.aws_key_pair.existing.key_name != "" ? data.aws_key_pair.existing.key_name : aws_key_pair.deployer[0].key_name
+  key_name = try(data.aws_key_pair.existing.key_name, aws_key_pair.deployer[0].key_name)
   vpc_security_group_ids = length(data.aws_security_group.existing.ids) > 0 ? data.aws_security_group.existing.ids : [aws_security_group.app_sg[0].id]
   associate_public_ip_address = true
 
