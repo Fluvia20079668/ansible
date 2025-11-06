@@ -52,14 +52,21 @@ jobs:
         working-directory: terraform
         id: tf_outputs
         run: |
-          # Save public IP and ECR URI
-          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip | tr -d '"')
-          ECR_URI=$(terraform output -raw ecr_repository_uri | tr -d '"')
+          # Save outputs to temporary files
+          terraform output -raw ec2_public_ip > ec2_ip.txt
+          terraform output -raw ecr_repository_uri > ecr_uri.txt
+          terraform output -raw private_key_pem > private_key.pem
+
+          # Clean whitespace
+          EC2_PUBLIC_IP=$(cat ec2_ip.txt | tr -d '[:space:]')
+          ECR_URI=$(cat ecr_uri.txt | tr -d '[:space:]')
+
+          # Base64 encode private key to handle multi-line safely
+          PRIVATE_KEY_B64=$(base64 -w 0 private_key.pem)
+
+          # Write clean variables to GitHub env
           echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
-
-          # Encode private key in base64 to handle multi-line safely
-          PRIVATE_KEY_B64=$(terraform output -raw private_key_pem | base64)
           echo "PRIVATE_KEY_B64=$PRIVATE_KEY_B64" >> $GITHUB_ENV
 
       # 7️⃣ Decode private key and save to file
