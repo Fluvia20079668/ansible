@@ -37,21 +37,29 @@ resource "aws_ecr_repository" "app_repo" {
 }
 
 # -------------------------
-# EC2 Key Pair (create if missing)
+# EC2 Key Pair (auto-create if missing)
 # -------------------------
+locals {
+  # Try to detect if key pair exists safely
+  key_exists = can(data.aws_key_pair.existing[0].key_name)
+}
+
+# Try to read key pair — don’t fail if missing
 data "aws_key_pair" "existing" {
-  count    = 1
+  count    = 0 # prevent lookup crash if key doesn't exist
   key_name = var.key_pair_name
 }
 
+# Generate new key only if the key pair doesn't exist
 resource "tls_private_key" "ec2_key" {
-  count     = length(data.aws_key_pair.existing) == 0 ? 1 : 0
+  count     = local.key_exists ? 0 : 1
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
+# Create AWS key pair if missing
 resource "aws_key_pair" "deployer" {
-  count      = length(data.aws_key_pair.existing) == 0 ? 1 : 0
+  count      = local.key_exists ? 0 : 1
   key_name   = var.key_pair_name
   public_key = tls_private_key.ec2_key[0].public_key_openssh
 }
@@ -136,7 +144,7 @@ resource "aws_instance" "app_server" {
   instance_type               = var.instance_type
   subnet_id                   = element(data.aws_subnets.default.ids, 0)
   associate_public_ip_address = true
-  key_name                    = length(aws_key_pair.deployer) > 0 ? aws_key_pair.deployer[0].key_name : var.key_pair_name
+  key_name                    = local.key_exists ? var.key_pair_name : aws_key_pair.deployer[0].key_name
   vpc_security_group_ids      = [length(aws_security_group.app_sg) > 0 ? aws_security_group.app_sg[0].id : data.aws_security_group.existing_sg.id]
 
   tags = {
