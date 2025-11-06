@@ -1,5 +1,5 @@
 ---
-- name: Minimal deploy of my-simple-app
+- name: Deploy my-simple-app safely
   hosts: web
   gather_facts: no
   become: yes
@@ -11,41 +11,31 @@
 
   tasks:
 
-    - name: Install Docker and dependencies
-      ansible.builtin.yum:
-        name:
-          - docker
-          - yum-utils
-          - device-mapper-persistent-data
-          - lvm2
-        state: present
+    - name: Install Docker and dependencies (raw)
+      ansible.builtin.raw: |
+        sudo yum install -y docker yum-utils device-mapper-persistent-data lvm2
+        sudo systemctl enable docker
+        sudo systemctl start docker
 
-    - name: Start Docker
-      ansible.builtin.service:
-        name: docker
-        state: started
-        enabled: yes
-
-    - name: Install Python Docker module
+    - name: Install Python Docker module (pip)
       ansible.builtin.pip:
         name: docker
         state: present
 
     - name: Login to AWS ECR
-      ansible.builtin.shell: >
-        aws ecr get-login-password --region {{ ecr_region }} |
-        docker login --username AWS --password-stdin {{ ecr_repo }}
+      ansible.builtin.shell: |
+        aws ecr get-login-password --region {{ ecr_region }} | docker login --username AWS --password-stdin {{ ecr_repo }}
       environment:
         AWS_ACCESS_KEY_ID: "{{ lookup('env','AWS_ACCESS_KEY_ID') }}"
         AWS_SECRET_ACCESS_KEY: "{{ lookup('env','AWS_SECRET_ACCESS_KEY') }}"
         AWS_DEFAULT_REGION: "{{ ecr_region }}"
 
-    - name: Pull my-simple-app image
+    - name: Pull my-simple-app image from ECR
       community.docker.docker_image:
         name: "{{ ecr_repo }}:latest"
         source: pull
 
-    - name: Remove old container
+    - name: Remove old container if exists
       community.docker.docker_container:
         name: "{{ container_name }}"
         state: absent
