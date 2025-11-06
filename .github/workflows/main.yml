@@ -19,11 +19,11 @@ jobs:
       IMAGE_TAG: latest
 
     steps:
-      # Step 1: Checkout repository
+      # Step 1️⃣: Checkout repository
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Configure AWS credentials
+      # Step 2️⃣: Configure AWS credentials
       - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -31,18 +31,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 3: Log in to ECR
+      # Step 3️⃣: Log in to ECR
       - name: 🐳 Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Step 4: Ensure ECR repository exists
+      # Step 4️⃣: Ensure ECR repository exists
       - name: 🏗️ Ensure ECR Repository Exists
         run: |
           aws ecr describe-repositories --repository-names ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }} || \
           aws ecr create-repository --repository-name ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }}
 
-      # Step 5: Build and push Docker image
+      # Step 5️⃣: Build and push Docker image
       - name: 🧱 Build, tag, and push Docker image
         run: |
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ env.IMAGE_TAG }}
@@ -51,29 +51,33 @@ jobs:
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # Step 6: Prepare SSH key
+      # Step 6️⃣: Prepare SSH key
       - name: 🔑 Setup SSH Key
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          mkdir -p $HOME/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > $HOME/.ssh/id_rsa
+          chmod 600 $HOME/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> $HOME/.ssh/known_hosts
+          echo "✅ SSH key setup complete"
 
-      # Step 7: Test SSH connectivity
+      # Step 7️⃣: Test SSH connectivity and show exact errors
       - name: 🔌 Test SSH Connection
         run: |
+          set -o pipefail
           echo "Testing SSH connection..."
           echo "SSH User: ${{ secrets.SSH_USER }}"
           echo "SSH Host: ${{ secrets.SSH_HOST }}"
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no "${{ secrets.SSH_USER }}"@"${{ secrets.SSH_HOST }}" "echo ✅ SSH connection successful"
+          ssh -i $HOME/.ssh/id_rsa -o StrictHostKeyChecking=no "${{ secrets.SSH_USER }}"@"${{ secrets.SSH_HOST }}" \
+          "echo ✅ SSH connection successful" || \
+          (echo "❌ SSH connection failed. Check your SSH_USER, SSH_HOST, and SSH_PRIVATE_KEY secrets." && exit 1)
 
-      # Step 8: Deploy to EC2 with Ansible
+      # Step 8️⃣: Deploy to EC2 with Ansible
       - name: 🚀 Deploy to EC2 with Ansible
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key_path: ~/.ssh/id_rsa
+          key_path: $HOME/.ssh/id_rsa
           port: 22
           script_stop: true
           timeout: 90s
