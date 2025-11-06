@@ -22,9 +22,6 @@ provider "aws" {
 data "aws_ecr_repository" "existing" {
   count = 1
   name  = var.ecr_repo_name
-  lifecycle {
-    ignore_errors = true
-  }
 }
 
 resource "aws_ecr_repository" "app_repo" {
@@ -38,9 +35,6 @@ resource "aws_ecr_repository" "app_repo" {
 data "aws_key_pair" "existing" {
   count    = 1
   key_name = var.key_pair_name
-  lifecycle {
-    ignore_errors = true
-  }
 }
 
 resource "tls_private_key" "ec2_key" {
