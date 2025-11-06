@@ -20,7 +20,7 @@ jobs:
       APP_PORT: 8090
 
     steps:
-      # 1️⃣ Checkout code
+      # 1️⃣ Checkout repo
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
@@ -43,7 +43,7 @@ jobs:
         working-directory: terraform
         run: terraform init
 
-      # 5️⃣ Terraform apply (create EC2, SG, Key Pair)
+      # 5️⃣ Terraform apply
       - name: 🌱 Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
@@ -53,7 +53,9 @@ jobs:
         id: ec2_ip
         working-directory: terraform
         run: |
-          echo "EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+          EC2_IP=$(terraform output -raw ec2_public_ip)
+          echo "EC2_PUBLIC_IP=$EC2_IP" >> $GITHUB_ENV
+          echo "Public EC2 IP: $EC2_IP"
 
       # 7️⃣ Log in to ECR
       - name: 🐳 Log in to Amazon ECR
@@ -112,7 +114,6 @@ jobs:
           APP_URL="http://${{ env.EC2_PUBLIC_IP }}:${{ env.APP_PORT }}"
           echo "🎉 Your app should be live at: $APP_URL"
 
-          # Retry loop (max 10 attempts, 5s interval)
           MAX_RETRIES=10
           SLEEP_TIME=5
           SUCCESS=0
