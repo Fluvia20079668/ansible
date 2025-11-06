@@ -1,4 +1,3 @@
-
 const express = require('express');
 const path = require('path');
 
@@ -13,7 +12,6 @@ app.get('/', (req, res) => {
 });
 
 const PORT = 8090;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
-
