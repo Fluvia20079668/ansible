@@ -16,11 +16,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout code
-      - name: Checkout source
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -28,11 +26,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Login to Amazon ECR locally
-      - name: Login to Amazon ECR
+      - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4️⃣ Build, tag, and push Docker image
       - name: Build and push Docker image
         env:
           COMMIT_SHA: ${{ github.sha }}
@@ -41,8 +37,7 @@ jobs:
           docker push $ECR_REPO:latest
           docker push $ECR_REPO:$COMMIT_SHA
 
-      # 5️⃣ Setup Python & Ansible
-      - name: Setup Python
+      - name: Setup Python & Ansible
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
@@ -53,103 +48,18 @@ jobs:
           pip install ansible boto3 botocore
           ansible-galaxy collection install community.docker
 
-      # 6️⃣ Setup SSH key
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           printf "%s\n" "${{ secrets.NETWORK_PEM }}" > ~/.ssh/network.pem
           chmod 400 ~/.ssh/network.pem
 
-      # 7️⃣ Add EC2 host to known_hosts to avoid SSH verification error
       - name: Add EC2 host key
+        run: ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
+
+      - name: Run Ansible playbook
         run: |
-          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
-
-      # 8️⃣ Run inline Ansible playbook
-      - name: Deploy on EC2
-        run: |
-          cat << 'EOF' > deploy_inline.yml
-          ---
-          - name: Deploy my-simple-app
-            hosts: all
-            become: yes
-            vars:
-              ecr_repo: "{{ ecr_repo }}"
-              image_tag: "latest"
-              commit_sha: "{{ commit_sha }}"
-              container_name: "my-simple-app"
-              exposed_port: 80
-              container_port: 8090
-
-            tasks:
-              # 1️⃣ Ensure Docker is installed
-              - name: Ensure Docker is installed
-                ansible.builtin.yum:
-                  name: docker
-                  state: present
-
-              # 2️⃣ Start Docker service
-              - name: Start Docker service
-                ansible.builtin.service:
-                  name: docker
-                  state: started
-                  enabled: yes
-
-              # 3️⃣ Login to ECR on EC2 via AWS CLI
-              - name: Login to ECR
-                ansible.builtin.shell: |
-                  aws ecr get-login-password --region eu-north-1 | \
-                  docker login --username AWS --password-stdin 456501836709.dkr.ecr.eu-north-1.amazonaws.com
-
-              # 4️⃣ Cleanup old container
-              - name: Cleanup old container
-                community.docker.docker_container:
-                  name: "{{ container_name }}"
-                  state: absent
-                  force_kill: yes
-                  remove_volumes: yes
-
-              # 5️⃣ Remove dangling images
-              - name: Remove dangling images
-                community.docker.docker_image:
-                  name: "<none>"
-                  state: absent
-                  prune: yes
-
-              # 6️⃣ Pull Docker images
-              - name: Pull Docker images
-                community.docker.docker_image:
-                  name: "{{ ecr_repo }}"
-                  tag: "{{ item }}"
-                  source: pull
-                loop:
-                  - "{{ image_tag }}"
-                  - "{{ commit_sha }}"
-
-              # 7️⃣ Run container
-              - name: Ensure container is running
-                community.docker.docker_container:
-                  name: "{{ container_name }}"
-                  image: "{{ ecr_repo }}:{{ image_tag }}"
-                  state: started
-                  restart_policy: always
-                  published_ports:
-                    - "{{ exposed_port }}:{{ container_port }}"
-                  pull: yes
-
-              # 8️⃣ Get EC2 public IP
-              - name: Get public IP
-                ansible.builtin.shell: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4"
-                register: public_ip
-
-              # 9️⃣ Show live URL
-              - name: Show live URL
-                ansible.builtin.debug:
-                  msg: "✅ Your app is live at: http://{{ public_ip.stdout }}/"
-          EOF
-
-          # Run the inline playbook on EC2
-          ansible-playbook -i $EC2_HOST, deploy_inline.yml \
+          ansible-playbook -i inventory.ini deploy.yml \
             -u $EC2_USER \
             --private-key ~/.ssh/network.pem \
             -e ecr_repo=${{ env.ECR_REPO }} \
