@@ -57,12 +57,15 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
       # Step 7️⃣: Test SSH connectivity
       - name: 🔌 Test SSH Connection
         run: |
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo ✅ SSH connection successful"
+          echo "Testing SSH connection..."
+          echo "SSH User: ${{ secrets.SSH_USER }}"
+          echo "SSH Host: ${{ secrets.SSH_HOST }}"
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no "${{ secrets.SSH_USER }}"@"${{ secrets.SSH_HOST }}" "echo ✅ SSH connection successful"
 
       # Step 8️⃣: Deploy to EC2 with Ansible
       - name: 🚀 Deploy to EC2 with Ansible
