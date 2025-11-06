@@ -1,7 +1,13 @@
 variable "aws_region" {
-  description = "AWS region for deployment"
+  description = "AWS region to deploy resources in"
   type        = string
   default     = "eu-north-1"
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t3.micro"
 }
 
 variable "ami_id" {
@@ -10,8 +16,8 @@ variable "ami_id" {
   default     = "ami-07fb0a5bf9ae299a4"
 }
 
-variable "ecr_name" {
-  description = "Existing ECR repository name"
+variable "ecr_repo_name" {
+  description = "ECR repository name"
   type        = string
   default     = "my-simple-app"
 }
