@@ -65,16 +65,15 @@ jobs:
           echo "ECR_REGISTRY=$(echo "$TF_OUTPUT" | jq -r .ecr_repository_uri.value | cut -d'/' -f1)" >> $GITHUB_ENV
           echo "PRIVATE_KEY=$(echo "$TF_OUTPUT" | jq -r .private_key_pem.value)" >> $GITHUB_ENV
 
-      # 8️⃣ Save EC2 private key
-      - name: Save private key
-        if: ${{ env.PRIVATE_KEY != 'Use existing key pair' }}
+      # 8️⃣ Save existing EC2 private key from GitHub Secret
+      - name: Save EC2 private key
         run: |
-          echo "$PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-
+            echo "${{ secrets.EC2_PRIVATE_KEY }}" > private_key.pem
+            chmod 600 private_key.pem
+            
       # 9️⃣ Wait for EC2 to boot
       - name: Wait for EC2
-        run: sleep 40
+        run: sleep 20
 
       # 🔟 Login to AWS ECR
       - name: Login to ECR
