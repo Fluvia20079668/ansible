@@ -19,16 +19,16 @@ provider "aws" {
 # -------------------------
 # ECR Repository
 # -------------------------
+# Check if ECR repo exists
 data "aws_ecr_repository" "existing" {
-  for_each = try({for r in [var.ecr_repo_name]: r => r}, {})
-  name     = each.key
+  name = var.ecr_repo_name
 }
 
+# Create ECR repo only if it doesn't exist
 resource "aws_ecr_repository" "app_repo" {
-  count = length(data.aws_ecr_repository.existing) == 0 ? 1 : 0
+  count = try(data.aws_ecr_repository.existing.id, "") == "" ? 1 : 0
   name  = var.ecr_repo_name
 }
-
 # -------------------------
 # EC2 Key Pair
 # -------------------------
@@ -144,5 +144,8 @@ output "private_key_pem" {
 }
 
 output "ecr_repository_uri" {
-  value = length(aws_ecr_repository.app_repo) > 0 ? aws_ecr_repository.app_repo[0].repository_url : var.ecr_repo_name
+  value = try(
+    aws_ecr_repository.app_repo[0].repository_url,
+    data.aws_ecr_repository.existing.repository_url
+  )
 }
