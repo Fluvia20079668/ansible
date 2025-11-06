@@ -30,7 +30,6 @@ jobs:
 
       # 3️⃣ Login to Amazon ECR locally
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       # 4️⃣ Build, tag, and push Docker image
@@ -47,6 +46,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
+
       - name: Install Ansible & dependencies
         run: |
           python -m pip install --upgrade pip
@@ -60,7 +60,12 @@ jobs:
           printf "%s\n" "${{ secrets.NETWORK_PEM }}" > ~/.ssh/network.pem
           chmod 400 ~/.ssh/network.pem
 
-      # 7️⃣ Run inline Ansible playbook
+      # 7️⃣ Add EC2 host to known_hosts to avoid SSH verification error
+      - name: Add EC2 host key
+        run: |
+          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
+
+      # 8️⃣ Run inline Ansible playbook
       - name: Deploy on EC2
         run: |
           cat << 'EOF' > deploy_inline.yml
@@ -148,4 +153,5 @@ jobs:
             -u $EC2_USER \
             --private-key ~/.ssh/network.pem \
             -e ecr_repo=${{ env.ECR_REPO }} \
-            -e commit_sha=${{ github.sha }}
+            -e commit_sha=${{ github.sha }} \
+            -e ansible_ssh_extra_args='-o StrictHostKeyChecking=no'
