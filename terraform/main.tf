@@ -35,38 +35,33 @@ data "aws_subnets" "default" {
 }
 
 # -------------------------
-# Key Pair: check if exists
+# Key Pair: use existing or create new
 # -------------------------
 data "aws_key_pair" "existing" {
-  for_each = toset([var.key_pair_name])
-  key_name = each.value
+  key_name = var.key_pair_name
 }
 
 resource "tls_private_key" "example" {
+  count     = data.aws_key_pair.existing.key_name == "" ? 1 : 0
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "aws_key_pair" "deployer" {
-  count      = length([for k in data.aws_key_pair.existing : k if k.key_name == var.key_pair_name]) == 0 ? 1 : 0
+  count      = data.aws_key_pair.existing.key_name == "" ? 1 : 0
   key_name   = var.key_pair_name
-  public_key = tls_private_key.example.public_key_openssh
+  public_key = tls_private_key.example[0].public_key_openssh
 }
 
 # -------------------------
-# ECR Repository: check if exists
+# ECR Repository: use existing or create new
 # -------------------------
 data "aws_ecr_repository" "existing" {
-  for_each       = toset([var.ecr_repo_name])
-  name           = each.value
-  depends_on     = [] # optional
-  lifecycle      {
-    ignore_changes = [image_tag_mutability]
-  }
+  name = var.ecr_repo_name
 }
 
 resource "aws_ecr_repository" "app_repo" {
-  count = length([for r in data.aws_ecr_repository.existing : r if r.name == var.ecr_repo_name]) == 0 ? 1 : 0
+  count = length([for r in [try(data.aws_ecr_repository.existing, null)] : r if r == null]) == 1 ? 1 : 0
   name  = var.ecr_repo_name
 }
 
@@ -103,6 +98,16 @@ resource "aws_security_group" "ec2_sg" {
 # -------------------------
 # EC2 Instance
 # -------------------------
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
+  }
+}
+
 resource "aws_instance" "app" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.instance_type
@@ -116,17 +121,6 @@ resource "aws_instance" "app" {
   }
 }
 
-# Ubuntu AMI (latest)
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
-  }
-}
-
 # -------------------------
 # Outputs
 # -------------------------
@@ -135,7 +129,7 @@ output "ec2_public_ip" {
 }
 
 output "private_key_pem" {
-  value     = length(aws_key_pair.deployer) > 0 ? tls_private_key.example.private_key_pem : "Use existing key pair"
+  value     = length(aws_key_pair.deployer) > 0 ? tls_private_key.example[0].private_key_pem : "Use existing key pair"
   sensitive = true
 }
 
