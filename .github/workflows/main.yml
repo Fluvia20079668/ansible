@@ -31,65 +31,58 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Install Terraform
+      # 3️⃣ Setup Terraform
       - name: 🛠️ Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
 
-      # 4️⃣ Initialize Terraform
+      # 4️⃣ Terraform init
       - name: ⛏️ Terraform Init
         working-directory: terraform
         run: terraform init
 
-      # 5️⃣ Apply Terraform (auto-approve)
+      # 5️⃣ Terraform apply
       - name: 🌍 Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
 
-      # 6️⃣ Extract Terraform outputs safely
+      # 6️⃣ Get Terraform outputs safely
       - name: 📡 Get Terraform outputs
         working-directory: terraform
         id: tf_outputs
         run: |
-          # Save outputs to temporary files
-          terraform output -raw ec2_public_ip > ec2_ip.txt
-          terraform output -raw ecr_repository_uri > ecr_uri.txt
-          terraform output -raw private_key_pem > private_key.pem
+          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip | tr -d '[:space:]')
+          ECR_URI=$(terraform output -raw ecr_repository_uri | tr -d '[:space:]')
+          PRIVATE_KEY_PEM=$(terraform output -raw private_key_pem)
 
-          # Clean whitespace
-          EC2_PUBLIC_IP=$(cat ec2_ip.txt | tr -d '[:space:]')
-          ECR_URI=$(cat ecr_uri.txt | tr -d '[:space:]')
+          if [ -z "$EC2_PUBLIC_IP" ] || [ -z "$ECR_URI" ]; then
+            echo "❌ Terraform outputs missing!"
+            exit 1
+          fi
 
-          # Base64 encode private key to handle multi-line safely
-          PRIVATE_KEY_B64=$(base64 -w 0 private_key.pem)
-
-          # Write clean variables to GitHub env
+          # Save variables to GitHub environment
           echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
-          echo "PRIVATE_KEY_B64=$PRIVATE_KEY_B64" >> $GITHUB_ENV
-
-      # 7️⃣ Decode private key and save to file
-      - name: 🔐 Save SSH Key
-        run: |
-          echo "$PRIVATE_KEY_B64" | base64 --decode > deploy_key.pem
+          echo "$PRIVATE_KEY_PEM" > deploy_key.pem
           chmod 600 deploy_key.pem
 
-      # 8️⃣ Log in to ECR
+      # 7️⃣ Log in to ECR
       - name: 🐳 Docker Login to ECR
         run: |
+          echo "Logging into ECR: $ECR_URI"
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_URI
 
-      # 9️⃣ Build, tag, and push Docker image
+      # 8️⃣ Build, tag, and push Docker image
       - name: 🧱 Build and Push Docker Image
         run: |
           IMAGE_URI=$ECR_URI:$IMAGE_TAG
-          echo "Building image $IMAGE_URI"
+          echo "Building Docker image: $IMAGE_URI"
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # 🔟 SSH into EC2 and deploy Docker container
+      # 9️⃣ Deploy Docker container on EC2
       - name: 🚀 Deploy Docker on EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i deploy_key.pem ec2-user@$EC2_PUBLIC_IP << EOF
@@ -102,6 +95,6 @@ jobs:
             sudo docker run -d -p 8090:8090 --name my-app --restart always $IMAGE_URI
           EOF
 
-      # 1️⃣1️⃣ Output live app URL
+      # 🔟 Display live app URL
       - name: 🌐 App URL
-        run: echo "Your app is live at http://$EC2_PUBLIC_IP:8090"
+        run: echo "✅ Your app is live at http://$EC2_PUBLIC_IP:8090"
