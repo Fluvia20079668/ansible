@@ -50,7 +50,7 @@ jobs:
         working-directory: ${{ env.TF_DIR }}
         run: terraform apply -auto-approve
 
-      # Capture outputs cleanly using JSON
+      # Capture Terraform outputs
       - name: Extract Terraform outputs
         id: tf_output
         working-directory: ${{ env.TF_DIR }}
@@ -78,16 +78,16 @@ jobs:
           docker build -t "$ECR_URI:latest" .
           docker push "$ECR_URI:latest"
 
-      # Deploy container to EC2
+      # Deploy Docker container to EC2
       - name: Deploy Docker container to EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i private_key.pem ec2-user@"${EC2_PUBLIC_IP}" <<'EOF'
-          sudo systemctl start docker || sudo service docker start
-          sudo docker stop my-simple-app || true
-          sudo docker rm my-simple-app || true
-          sudo docker pull ${ECR_URI}:latest
-          sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:latest
-          EOF
+sudo systemctl start docker || sudo service docker start
+sudo docker stop my-simple-app || true
+sudo docker rm my-simple-app || true
+sudo docker pull ${ECR_URI}:latest
+sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:latest
+EOF
 
       # Output live URL
       - name: Show live web page
