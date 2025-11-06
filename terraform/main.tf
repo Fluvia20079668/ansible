@@ -9,10 +9,6 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.5"
-    }
   }
 }
 
@@ -35,33 +31,33 @@ data "aws_subnets" "default" {
 }
 
 # -------------------------
-# Key Pair: use existing or create new
+# EC2 Key Pair
 # -------------------------
 data "aws_key_pair" "existing" {
   key_name = var.key_pair_name
 }
 
 resource "tls_private_key" "example" {
-  count     = data.aws_key_pair.existing.key_name == "" ? 1 : 0
+  count     = length([for k in [try(data.aws_key_pair.existing, null)] : k if k == null])
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "aws_key_pair" "deployer" {
-  count      = data.aws_key_pair.existing.key_name == "" ? 1 : 0
+  count      = length([for k in [try(data.aws_key_pair.existing, null)] : k if k == null])
   key_name   = var.key_pair_name
   public_key = tls_private_key.example[0].public_key_openssh
 }
 
 # -------------------------
-# ECR Repository: use existing or create new
+# ECR Repository
 # -------------------------
 data "aws_ecr_repository" "existing" {
   name = var.ecr_repo_name
 }
 
 resource "aws_ecr_repository" "app_repo" {
-  count = length([for r in [try(data.aws_ecr_repository.existing, null)] : r if r == null]) == 1 ? 1 : 0
+  count = length([for r in [try(data.aws_ecr_repository.existing, null)] : r if r == null])
   name  = var.ecr_repo_name
 }
 
@@ -100,7 +96,7 @@ resource "aws_security_group" "ec2_sg" {
 # -------------------------
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
+  owners      = ["099720109477"]
 
   filter {
     name   = "name"
