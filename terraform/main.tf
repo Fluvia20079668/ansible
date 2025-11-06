@@ -139,15 +139,15 @@ data "aws_ami" "amazon_linux" {
 # -------------------------
 # EC2 Instance
 # -------------------------
-resource "aws_instance" "app_server" {
-  ami                         = data.aws_ami.amazon_linux.id
-  instance_type               = var.instance_type
-  subnet_id                   = element(data.aws_subnets.default.ids, 0)
-  associate_public_ip_address = true
-  key_name                    = local.key_exists ? var.key_pair_name : aws_key_pair.deployer[0].key_name
-  vpc_security_group_ids      = [length(aws_security_group.app_sg) > 0 ? aws_security_group.app_sg[0].id : data.aws_security_group.existing_sg.id]
+#resource "aws_instance" "app_server" {
+ # ami                         = data.aws_ami.amazon_linux.id
+  #instance_type               = var.instance_type
+  #subnet_id                   = element(data.aws_subnets.default.ids, 0)
+  #associate_public_ip_address = true
+  #key_name                    = local.key_exists ? var.key_pair_name : aws_key_pair.deployer[0].key_name
+  #vpc_security_group_ids      = [length(aws_security_group.app_sg) > 0 ? aws_security_group.app_sg[0].id : data.aws_security_group.existing_sg.id]
 
-  tags = {
-    Name = "${var.project_name}-ec2"
-  }
-}
+  #tags = {
+   # Name = "${var.project_name}-ec2"
+  #}
+#}
