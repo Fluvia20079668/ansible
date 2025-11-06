@@ -14,15 +14,18 @@ env:
   HOST_PORT: 8090
   APP_PORT: 80
   KEY_PAIR_NAME: deployer-key
+  EXISTING_EC2_IP: 16.170.110.166   # ✅ your current EC2 IP
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -30,15 +33,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # 3️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.8
+          terraform_version: 1.8.0
 
+      # 4️⃣ Terraform Init
       - name: Terraform Init
         working-directory: ${{ env.TF_DIR }}
         run: terraform init
 
+      # 5️⃣ Terraform Apply (ECR only, reuse existing EC2)
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
         run: |
@@ -46,9 +52,9 @@ jobs:
             -var project_name=my-simple-app \
             -var aws_region=${{ env.AWS_REGION }} \
             -var ecr_repo_name=${{ env.ECR_REPO_NAME }} \
-            -var key_pair_name=${{ env.KEY_PAIR_NAME }} \
-            -var instance_type=t3.micro
+            -var ec2_public_ip=${{ env.EXISTING_EC2_IP }}
 
+      # 6️⃣ Extract Terraform outputs (ECR info only)
       - name: Extract Terraform outputs
         id: tf_output
         working-directory: ${{ env.TF_DIR }}
@@ -57,43 +63,54 @@ jobs:
           terraform output -json > tf_output.json
           echo "✅ Terraform outputs fetched"
           cat tf_output.json
-
           echo "EC2_PUBLIC_IP=$(jq -r .ec2_public_ip.value tf_output.json)" >> $GITHUB_ENV
           echo "ECR_URI=$(jq -r .ecr_repository_uri.value tf_output.json)" >> $GITHUB_ENV
           echo "ECR_REGISTRY=$(jq -r .ecr_repository_uri.value tf_output.json | cut -d'/' -f1)" >> $GITHUB_ENV
 
+      # 7️⃣ Build Docker image
       - name: Build Docker image
         run: docker build -t ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} .
 
+      # 8️⃣ Authenticate Docker to ECR
       - name: Authenticate Docker to ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} \
             | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
+      # 9️⃣ Tag and Push Docker image
       - name: Tag and Push Docker image
         run: |
           docker tag ${{ env.ECR_REPO_NAME }}:${{ env.DOCKER_IMAGE_TAG }} \
             ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
-
           docker push ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
 
+      # 🔟 Deploy Docker container to your existing EC2
       - name: SSH into EC2 and deploy container
         run: |
           echo "${{ secrets.EC2_PRIVATE_KEY }}" > private_key.pem
           chmod 600 private_key.pem
-
-          echo "Connecting to EC2 at ${{ env.EC2_PUBLIC_IP }}..."
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ env.EC2_PUBLIC_IP }} << 'EOF'
-            sudo apt-get update -y
-            sudo apt-get install -y docker.io
+          echo "Connecting to EC2 at ${{ env.EXISTING_EC2_IP }}..."
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ec2-user@${{ env.EXISTING_EC2_IP }} << 'EOF'
+            sudo yum update -y
+            sudo yum install -y docker
             sudo systemctl start docker
             sudo systemctl enable docker
 
+            # Login to ECR
             aws ecr get-login-password --region eu-north-1 | sudo docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
-            sudo docker pull ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
-            sudo docker stop my-simple-app || true
-            sudo docker rm my-simple-app || true
+            # Stop and remove any old container
+            sudo docker stop ${{ env.CONTAINER_NAME }} || true
+            sudo docker rm ${{ env.CONTAINER_NAME }} || true
+            sudo docker image rm ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }} || true
 
-            sudo docker run -d --name my-simple-app -p 80:80 ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
+            # Pull and run the new image
+            sudo docker pull ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
+            sudo docker run -d --name ${{ env.CONTAINER_NAME }} -p ${{ env.HOST_PORT }}:${{ env.APP_PORT }} ${{ env.ECR_URI }}:${{ env.DOCKER_IMAGE_TAG }}
           EOF
+
+      # 1️⃣1️⃣ Print app URL
+      - name: Show live app URL
+        run: |
+          echo "✅ Deployment successful!"
+          echo "App URL: http://${{ env.EXISTING_EC2_IP }}:${{ env.HOST_PORT }}"
