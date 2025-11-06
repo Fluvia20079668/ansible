@@ -104,4 +104,5 @@ jobs:
 
       # 1️⃣5️⃣ Output live URL
       - name: Show live web page
-        run: echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
+        run: |
+          echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
