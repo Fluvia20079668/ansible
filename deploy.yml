@@ -1,5 +1,5 @@
 ---
-- name: Deploy my-simple-app
+- name: Deploy my-simple-app using shell Docker commands
   hosts: ec2
   become: yes
   vars:
@@ -25,39 +25,20 @@
     - name: Login to ECR
       ansible.builtin.shell: |
         aws ecr get-login-password --region eu-north-1 | \
-        docker login --username AWS --password-stdin 456501836709.dkr.ecr.eu-north-1.amazonaws.com
+        docker login --username AWS --password-stdin {{ ecr_repo | regex_replace('/.*','') }}
 
     - name: Cleanup old container
-      community.docker.docker_container:
-        name: "{{ container_name }}"
-        state: absent
-        force_kill: yes
-        remove_volumes: yes
+      ansible.builtin.shell: |
+        docker rm -f {{ container_name }} || true
 
-    - name: Remove dangling images
-      community.docker.docker_image:
-        name: "<none>"
-        state: absent
-        prune: yes
+    - name: Pull latest Docker image
+      ansible.builtin.shell: |
+        docker pull {{ ecr_repo }}:{{ image_tag }}
+        docker pull {{ ecr_repo }}:{{ commit_sha }}
 
-    - name: Pull Docker images
-      community.docker.docker_image:
-        name: "{{ ecr_repo }}"
-        tag: "{{ item }}"
-        source: pull
-      loop:
-        - "{{ image_tag }}"
-        - "{{ commit_sha }}"
-
-    - name: Ensure container is running
-      community.docker.docker_container:
-        name: "{{ container_name }}"
-        image: "{{ ecr_repo }}:{{ image_tag }}"
-        state: started
-        restart_policy: always
-        published_ports:
-          - "{{ exposed_port }}:{{ container_port }}"
-        pull: yes
+    - name: Run new container
+      ansible.builtin.shell: |
+        docker run -d -p {{ exposed_port }}:{{ container_port }} --name {{ container_name }} {{ ecr_repo }}:{{ image_tag }}
 
     - name: Get public IP
       ansible.builtin.shell: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4"
