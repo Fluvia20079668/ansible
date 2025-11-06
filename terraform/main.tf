@@ -119,18 +119,17 @@ data "aws_ami" "amazon_linux" {
 }
 
 resource "aws_instance" "app_server" {
-  ami                    = data.aws_ami.amazon_linux.id
-  instance_type          = var.instance_type
-  subnet_id              = element(data.aws_subnets.default.ids, 0)
-  key_name               = length(aws_key_pair.deployer) > 0 ? aws_key_pair.deployer[0].key_name : var.key_pair_name
-  vpc_security_group_ids = [length(aws_security_group.app_sg) > 0 ? aws_security_group.app_sg[0].id : data.aws_security_group.existing_sg.id]
+  ami                         = data.aws_ami.amazon_linux.id
+  instance_type               = var.instance_type
+  subnet_id                   = element(data.aws_subnets.default.ids, 0)
+  key_name                    = var.key_pair_name
+  vpc_security_group_ids      = [aws_security_group.app_sg.id] # or use existing SG ID directly
   associate_public_ip_address = true
 
   tags = {
     Name = "my-simple-app-server"
   }
 }
-
 # -------------------------
 # Outputs
 # -------------------------
