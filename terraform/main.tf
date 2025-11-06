@@ -12,11 +12,22 @@ terraform {
     }
   }
 
-  backend "local" {} # You can switch to S3 backend if needed
+  backend "local" {} # Switch to S3 backend if needed
 }
 
 provider "aws" {
   region = var.aws_region
+}
+
+##############################
+# DATA SOURCES
+##############################
+data "aws_vpc" "selected" {
+  default = true
+}
+
+data "aws_subnet_ids" "all" {
+  vpc_id = data.aws_vpc.selected.id
 }
 
 ##############################
@@ -27,44 +38,28 @@ resource "aws_security_group" "web_sg" {
   description = "Allow SSH and App traffic"
   vpc_id      = data.aws_vpc.selected.id
 
-  ingress = [
-    {
-      description      = "Allow App Port"
-      from_port        = 8090
-      to_port          = 8090
-      protocol         = "tcp"
-      cidr_blocks      = ["0.0.0.0/0"]
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      security_groups  = []
-      self             = false
-    },
-    {
-      description      = "Allow SSH"
-      from_port        = 22
-      to_port          = 22
-      protocol         = "tcp"
-      cidr_blocks      = ["0.0.0.0/0"]
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      security_groups  = []
-      self             = false
-    }
-  ]
+  ingress {
+    description = "Allow App Port"
+    from_port   = 8090
+    to_port     = 8090
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-  egress = [
-    {
-      description      = ""
-      from_port        = 0
-      to_port          = 0
-      protocol         = "-1"
-      cidr_blocks      = ["0.0.0.0/0"]
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      security_groups  = []
-      self             = false
-    }
-  ]
+  ingress {
+    description = "Allow SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   tags = {
     Name = "web-sg"
@@ -72,23 +67,7 @@ resource "aws_security_group" "web_sg" {
 }
 
 ##############################
-# FETCH DEFAULT VPC & SUBNET
-##############################
-data "aws_vpc" "selected" {
-  default = true
-}
-
-data "aws_subnet" "selected" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.selected.id]
-  }
-
-  availability_zone = "${var.aws_region}a"
-}
-
-##############################
-# KEY PAIR GENERATION
+# KEY PAIR
 ##############################
 resource "tls_private_key" "deployer" {
   algorithm = "RSA"
@@ -107,22 +86,22 @@ resource "aws_instance" "app_server" {
   ami                         = var.ami_id
   instance_type               = var.instance_type
   key_name                    = aws_key_pair.deployer.key_name
-  subnet_id                   = data.aws_subnet.selected.id
+  subnet_id                   = data.aws_subnet_ids.all.ids[0]
   vpc_security_group_ids      = [aws_security_group.web_sg.id]
   associate_public_ip_address = true
 
-  tags = {
-    Name = "terraform-web"
-  }
-
-  # Optional: simple user_data for testing webserver
   user_data = <<-EOF
               #!/bin/bash
               sudo yum update -y
               sudo yum install -y docker
-              sudo service docker start
+              sudo systemctl enable docker
+              sudo systemctl start docker
               docker run -d -p 8090:80 nginx
               EOF
+
+  tags = {
+    Name = "terraform-web"
+  }
 }
 
 ##############################
@@ -140,7 +119,6 @@ resource "aws_ecr_repository" "app" {
 ##############################
 # OUTPUTS
 ##############################
-
 output "ec2_public_ip" {
   description = "Public IP of the EC2 instance"
   value       = aws_instance.app_server.public_ip
