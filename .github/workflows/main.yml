@@ -33,41 +33,52 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4️⃣ Build and push Docker image to ECR
+      # 4️⃣ Build, tag, and push Docker image to ECR with commit SHA
       - name: Build, tag, and push image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: latest
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REPO:$IMAGE_TAG .
-          docker push $ECR_REPO:$IMAGE_TAG
+          echo "🔖 Building Docker image..."
+          docker build -t $ECR_REPO:latest -t $ECR_REPO:$COMMIT_SHA .
+          
+          echo "📤 Pushing Docker images..."
+          docker push $ECR_REPO:latest
+          docker push $ECR_REPO:$COMMIT_SHA
 
-      # 5️⃣ Setup SSH key
+      # 5️⃣ Setup SSH key safely
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.NETWORK_PEM }}" > ~/.ssh/network.pem
+          printf "%s\n" "${{ secrets.NETWORK_PEM }}" > ~/.ssh/network.pem
           chmod 400 ~/.ssh/network.pem
           ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
 
-      # 6️⃣ Test SSH Connection
+      # 6️⃣ Test SSH connection
       - name: Test SSH connection
         run: |
-          ssh -i ~/.ssh/network.pem $EC2_USER@$EC2_HOST "echo '✅ Connected to EC2 successfully.'"
+          ssh -i ~/.ssh/network.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "echo '✅ Connected to EC2 successfully.'"
 
-      # 7️⃣ Deploy new Docker container
+      # 7️⃣ Deploy Docker container with cleanup, using commit SHA
       - name: Deploy on EC2
+        env:
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          ssh -i ~/.ssh/network.pem $EC2_USER@$EC2_HOST << 'EOF'
+          ssh -i ~/.ssh/network.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST << 'EOF'
             set -e
-            echo "🧹 Stopping old container (if exists)..."
+
+            echo "🧹 Cleaning up old containers..."
             docker stop my-simple-app || true
             docker rm my-simple-app || true
+            docker container prune -f --filter "until=24h"
+            docker image prune -f
 
-            echo "📦 Pulling latest image..."
+            echo "📦 Pulling latest and commit-specific images..."
             docker pull 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
+            docker pull 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:${COMMIT_SHA}
 
-            echo "🚀 Starting container..."
+            echo "🚀 Starting container with latest image..."
             docker run -d -p 80:8090 --name my-simple-app 456501836709.dkr.ecr.eu-north-1.amazonaws.com/my-simple-app:latest
 
             echo "✅ Deployment complete!"
