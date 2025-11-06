@@ -28,7 +28,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Login to Amazon ECR
+      # 3️⃣ Login to Amazon ECR locally
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -43,7 +43,7 @@ jobs:
           docker push $ECR_REPO:$COMMIT_SHA
 
       # 5️⃣ Setup Python & Ansible
-      - name: Setup Python & Ansible
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
@@ -52,7 +52,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install ansible boto3 botocore
           ansible-galaxy collection install community.docker
-          ansible-galaxy collection install community.aws
 
       # 6️⃣ Setup SSH key
       - name: Setup SSH key
@@ -78,21 +77,26 @@ jobs:
               container_port: 8090
 
             tasks:
+              # 1️⃣ Ensure Docker is installed
               - name: Ensure Docker is installed
                 ansible.builtin.yum:
                   name: docker
                   state: present
 
+              # 2️⃣ Start Docker service
               - name: Start Docker service
                 ansible.builtin.service:
                   name: docker
                   state: started
                   enabled: yes
 
-              - name: Log in to ECR
-                community.aws.ecr_login:
-                  region: eu-north-1
+              # 3️⃣ Login to ECR on EC2 via AWS CLI
+              - name: Login to ECR
+                ansible.builtin.shell: |
+                  aws ecr get-login-password --region eu-north-1 | \
+                  docker login --username AWS --password-stdin 456501836709.dkr.ecr.eu-north-1.amazonaws.com
 
+              # 4️⃣ Cleanup old container
               - name: Cleanup old container
                 community.docker.docker_container:
                   name: "{{ container_name }}"
@@ -100,12 +104,14 @@ jobs:
                   force_kill: yes
                   remove_volumes: yes
 
+              # 5️⃣ Remove dangling images
               - name: Remove dangling images
                 community.docker.docker_image:
                   name: "<none>"
                   state: absent
                   prune: yes
 
+              # 6️⃣ Pull Docker images
               - name: Pull Docker images
                 community.docker.docker_image:
                   name: "{{ ecr_repo }}"
@@ -115,6 +121,7 @@ jobs:
                   - "{{ image_tag }}"
                   - "{{ commit_sha }}"
 
+              # 7️⃣ Run container
               - name: Ensure container is running
                 community.docker.docker_container:
                   name: "{{ container_name }}"
@@ -125,14 +132,20 @@ jobs:
                     - "{{ exposed_port }}:{{ container_port }}"
                   pull: yes
 
-              - name: Get EC2 public IP
+              # 8️⃣ Get EC2 public IP
+              - name: Get public IP
                 ansible.builtin.shell: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4"
                 register: public_ip
 
+              # 9️⃣ Show live URL
               - name: Show live URL
                 ansible.builtin.debug:
                   msg: "✅ Your app is live at: http://{{ public_ip.stdout }}/"
           EOF
 
-          # Run the inline playbook on the EC2 host
-          ansible-playbook -i $EC2_HOST, deploy_inline.yml -u $EC2_USER --private-key ~/.ssh/network.pem -e ecr_repo=${{ env.ECR_REPO }} -e commit_sha=${{ github.sha }}
+          # Run the inline playbook on EC2
+          ansible-playbook -i $EC2_HOST, deploy_inline.yml \
+            -u $EC2_USER \
+            --private-key ~/.ssh/network.pem \
+            -e ecr_repo=${{ env.ECR_REPO }} \
+            -e commit_sha=${{ github.sha }}
