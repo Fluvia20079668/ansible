@@ -143,22 +143,3 @@ resource "aws_instance" "app_server" {
     Name = "${var.project_name}-ec2"
   }
 }
-
-# -------------------------
-# Outputs
-# -------------------------
-output "ec2_public_ip" {
-  value = aws_instance.app_server.public_ip
-}
-
-output "ecr_repository_uri" {
-  value = try(
-    aws_ecr_repository.app_repo[0].repository_url,
-    data.aws_ecr_repository.existing.repository_url
-  )
-}
-
-output "private_key_pem" {
-  value     = length(aws_key_pair.deployer) > 0 ? tls_private_key.ec2_key[0].private_key_pem : "Using existing key pair"
-  sensitive = true
-}
