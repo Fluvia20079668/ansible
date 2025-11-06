@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1
-      ECR_REPO_NAME: my-simple-app           # ✅ FIXED — matches your actual ECR repo
+      ECR_REPO_NAME: my-simple-app
       IMAGE_TAG: latest
 
     steps:
@@ -23,7 +23,7 @@ jobs:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2️⃣: Configure AWS credentials (from GitHub secrets)
+      # Step 2️⃣: Configure AWS credentials
       - name: 🔑 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -36,7 +36,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Step 4️⃣: Ensure the ECR repository exists (auto-create if missing)
+      # Step 4️⃣: Ensure the ECR repository exists
       - name: 🏗️ Ensure ECR Repository Exists
         run: |
           aws ecr describe-repositories --repository-names ${{ env.ECR_REPO_NAME }} --region ${{ env.AWS_REGION }} || \
@@ -51,22 +51,34 @@ jobs:
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # Step 6️⃣: SSH into EC2 and deploy via Ansible
+      # Step 6️⃣: Prepare SSH Key
+      - name: 🔑 Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      # Step 7️⃣: Test SSH connectivity
+      - name: 🔌 Test SSH Connection
+        run: |
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo ✅ SSH connection successful"
+
+      # Step 8️⃣: Deploy to EC2 with Ansible
       - name: 🚀 Deploy to EC2 with Ansible
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key: ~/.ssh/id_rsa
           port: 22
-          passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script_stop: true
           timeout: 90s
           command_timeout: 30m
           script: |
             echo "✅ Connected to EC2"
 
-            # Update dependencies
+            # Install dependencies
             sudo yum install -y ansible git awscli docker
 
             # Ensure Docker is running
