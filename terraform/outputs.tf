@@ -34,8 +34,7 @@ output "ecr_repository_uri" {
 
 # EC2 public IP address
 output "ec2_public_ip" {
-  description = "Public IP of the EC2 instance"
-  value       = aws_instance.app_server.public_ip
+  value = var.ec2_public_ip
 }
 
 # Private key (only output if a new key pair was created)
