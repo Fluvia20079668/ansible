@@ -27,3 +27,8 @@ variable "instance_type" {
   type        = string
   default     = "t3.micro"
 }
+variable "ec2_public_ip" {
+  description = "Public IP of the existing EC2 instance"
+  type        = string
+  default     = "16.170.110.166" # <-- replace with your actual IP
+}
