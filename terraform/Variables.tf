@@ -1,23 +1,25 @@
+# AWS region
 variable "aws_region" {
-  description = "AWS region"
   type        = string
+  description = "AWS region to deploy resources"
   default     = "eu-north-1"
 }
 
-variable "ami_id" {
-  description = "AMI ID for EC2 instance"
+# EC2 Key Pair name
+variable "key_pair_name" {
   type        = string
-  default     = "ami-04b7b1c4371bda87b" # Amazon Linux 2 (EU-North-1)
+  description = "Name of the EC2 Key Pair to use or create"
 }
 
-variable "instance_type" {
-  description = "Instance type"
-  type        = string
-  default     = "t3.micro"
-}
-
+# ECR Repository name
 variable "ecr_repo_name" {
-  description = "ECR repository name"
   type        = string
-  default     = "my-simple-app"
+  description = "Name of the ECR repository to use or create"
+}
+
+# EC2 instance type
+variable "instance_type" {
+  type        = string
+  description = "EC2 instance type"
+  default     = "t4g.micro"
 }
