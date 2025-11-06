@@ -71,9 +71,17 @@ jobs:
           echo "${{ secrets.EC2_PRIVATE_KEY }}" > private_key.pem
           chmod 600 private_key.pem
 
-      # 9️⃣ Wait for EC2 to boot
+      # 9️⃣ Wait for EC2 SSH to be ready
       - name: Wait for EC2
-        run: sleep 20
+        run: |
+          EC2_IP=${EC2_PUBLIC_IP}
+          SSH_KEY=private_key.pem
+          echo "Waiting for EC2 ($EC2_IP) to be ready for SSH..."
+          for i in {1..30}; do
+            ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@$EC2_IP "echo ok" && break
+            echo "Retrying in 10s..."
+            sleep 10
+          done
 
       # 🔟 Login to AWS ECR
       - name: Login to ECR
@@ -110,4 +118,5 @@ jobs:
 
       # 1️⃣5️⃣ Show live app URL
       - name: Show live URL
-        run: echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:8090"
+        run: |
+          echo "✅ App deployed successfully: http://${EC2_PUBLIC_IP}:8090"
