@@ -12,9 +12,9 @@ env:
   EC2_USER: ec2-user
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
 
+  build:
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,16 +37,22 @@ jobs:
           docker push $ECR_REPO:latest
           docker push $ECR_REPO:$COMMIT_SHA
 
+  deploy:
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Setup Python & Ansible
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      - name: Install Ansible & dependencies
+      - name: Install Ansible
         run: |
           python -m pip install --upgrade pip
-          pip install ansible boto3 botocore
-          ansible-galaxy collection install community.docker
+          pip install ansible boto3
 
       - name: Setup SSH key
         run: |
@@ -64,4 +70,5 @@ jobs:
             --private-key ~/.ssh/network.pem \
             -e ecr_repo=${{ env.ECR_REPO }} \
             -e commit_sha=${{ github.sha }} \
+            -f 1 \
             -e ansible_ssh_extra_args='-o StrictHostKeyChecking=no'
