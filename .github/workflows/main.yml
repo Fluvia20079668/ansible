@@ -50,11 +50,12 @@ jobs:
       # 6️⃣ Terraform Apply
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
-        run: terraform apply -auto-approve \
-          -var "aws_region=${{ env.AWS_REGION }}" \
-          -var "ecr_repo_name=${{ env.ECR_REPO_NAME }}" \
-          -var "key_pair_name=${{ env.KEY_PAIR_NAME }}" \
-          -var "instance_type=t4g.micro"
+        run: |
+          terraform apply -auto-approve \
+            -var "aws_region=${{ env.AWS_REGION }}" \
+            -var "ecr_repo_name=${{ env.ECR_REPO_NAME }}" \
+            -var "key_pair_name=${{ env.KEY_PAIR_NAME }}" \
+            -var "instance_type=t4g.micro"
 
       # 7️⃣ Extract Terraform outputs
       - name: Extract Terraform outputs
@@ -108,15 +109,15 @@ jobs:
             exit 1
           fi
 
-          ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@"${EC2_PUBLIC_IP}" <<'EOF'
+          ssh -o StrictHostKeyChecking=no -i $SSH_KEY ec2-user@"${EC2_PUBLIC_IP}" <<EOF
           sudo systemctl start docker || sudo service docker start
           sudo docker stop my-simple-app || true
           sudo docker rm my-simple-app || true
           sudo docker pull ${ECR_URI}:${DOCKER_IMAGE_TAG}
           sudo docker run -d -p 8090:80 --name my-simple-app ${ECR_URI}:${DOCKER_IMAGE_TAG}
-          EOF
+            EOF
 
       # 1️⃣5️⃣ Output live URL
       - name: Show live web page
         run: |
-      echo "Live app available at: http://${EC2_PUBLIC_IP}:8090" 
+          echo "Live app available at: http://${EC2_PUBLIC_IP}:8090"
